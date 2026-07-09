@@ -16,10 +16,15 @@ import {
   clubsInDivision, divisionStandings, autoSimulateDivision,
   applyPromotionRelegation, PROMOTE, RELEGATE,
 } from './pyramid.js';
+import {
+  setLeagueObjective, setFinanceObjective, gradeLeagueObjective,
+  applyConfidence, trackStatus, confidenceLabel,
+  START_CONFIDENCE,
+} from './objectives.js';
 
-// v2 save schema (multi-division). Old v1 saves are single-division and
+// v3 save schema (multi-division + board objectives). Older saves are
 // incompatible, so they are simply ignored and a fresh pyramid game starts.
-const SAVE_KEY = 'fco-elite-save-v2';
+const SAVE_KEY = 'fco-elite-save-v3';
 
 const state = {
   league: null,
@@ -29,6 +34,14 @@ const state = {
   market: [],
   currentTab: 'dashboard',
   lastResults: [],
+  // Board & manager objectives
+  objective: null,        // current league objective (see objectives.js)
+  financeObjective: null, // advisory finance guardrail
+  confidence: START_CONFIDENCE, // board confidence 0–100
+  badlyStreak: 0,         // consecutive "badly missed" seasons (two-strike sack rule)
+  jobStatus: 'secure',    // secure | watch | at_risk | sacked
+  lastReview: null,       // last end-of-season board review (for the dashboard)
+  lastMove: null,         // 'promoted' | 'relegated' | null — how we arrived this season
 };
 
 /* ------------------------------------------------------------------ */
@@ -52,6 +65,14 @@ function newGame() {
   state.season = 1;
   state.market = generateMarket(uc);
   state.lastResults = [];
+  // Board objectives for the opening season.
+  state.confidence = START_CONFIDENCE;
+  state.badlyStreak = 0;
+  state.jobStatus = 'secure';
+  state.lastMove = null;
+  state.lastReview = null;
+  state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
+  state.financeObjective = setFinanceObjective();
 }
 
 function userClub() {
@@ -83,6 +104,13 @@ function save() {
         home: r.home.id, away: r.away.id,
         homeGoals: r.homeGoals, awayGoals: r.awayGoals,
       })),
+      objective: state.objective,
+      financeObjective: state.financeObjective,
+      confidence: state.confidence,
+      badlyStreak: state.badlyStreak,
+      jobStatus: state.jobStatus,
+      lastReview: state.lastReview,
+      lastMove: state.lastMove,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -105,6 +133,18 @@ function load() {
       home: clubsById[r.home], away: clubsById[r.away],
       homeGoals: r.homeGoals, awayGoals: r.awayGoals,
     }));
+    state.objective = data.objective ?? null;
+    state.financeObjective = data.financeObjective ?? setFinanceObjective();
+    state.confidence = data.confidence ?? START_CONFIDENCE;
+    state.badlyStreak = data.badlyStreak ?? 0;
+    state.jobStatus = data.jobStatus ?? 'secure';
+    state.lastReview = data.lastReview ?? null;
+    state.lastMove = data.lastMove ?? null;
+    // Safety: if an objective is missing (older-but-compatible save), set one.
+    if (!state.objective) {
+      const uc = clubsById[data.userClubId];
+      state.objective = setLeagueObjective(uc, null, clubsInDivision(clubs, uc.division).length);
+    }
     return true;
   } catch (e) { return false; }
 }
@@ -201,6 +241,11 @@ function renderDashboard() {
   const nextWeek = state.fixtures[state.currentWeek];
   const health = financialHealth(club);
 
+  // Board objective + live on-track status.
+  const obj = state.objective;
+  const track = trackStatus(obj, pos, club.played);
+  const conf = confidenceLabel(state.confidence);
+
   const nextFixture = nextWeek
     ? nextWeek.matches.find(m => m.home === club.id || m.away === club.id)
     : null;
@@ -230,6 +275,23 @@ function renderDashboard() {
         <div class="stat"><strong>Lost</strong><span class="danger">${club.lost}</span></div>
         <div class="stat"><strong>Points</strong><span>${club.points}</span></div>
       </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h2 class="mb0">Board Objective</h2>
+        <span class="pill obj-${track.state}">${trackDot(track.state)} ${trackWord(track.state)}</span>
+      </div>
+      <p class="mt"><strong>${obj ? obj.label : '—'}</strong>
+        ${obj ? `<span class="muted small">(${obj.divisionName})</span>` : ''}</p>
+      ${obj ? `<p class="muted small">${obj.reason}</p>` : ''}
+      <p class="small ${trackClass(track.state)}">${track.text}</p>
+      <div class="flex-between mt">
+        <span class="small muted">Board confidence</span>
+        <span class="small ${bandClass(conf.band)}">${conf.label} · ${state.confidence}/100</span>
+      </div>
+      <div class="bar"><div class="bar-fill ${bandClass(conf.band)}" style="width:${state.confidence}%"></div></div>
+      ${jobBanner()}
     </div>
 
     <div class="card">
@@ -688,9 +750,42 @@ function onNewSeason() {
   const finalPos = myTable.indexOf(uc) + 1;
   const oldDivName = DIVISIONS[uc.division].name;
 
+  // 2a. Grade the board objective for the season just played, then update
+  //     board confidence and job status (transparent two-strike sack rule).
+  const grading = gradeLeagueObjective(state.objective, finalPos);
+  const review = applyConfidence(state.confidence, grading.delta, grading.grade, state.badlyStreak);
+  state.confidence = review.confidence;
+  state.badlyStreak = review.badlyStreak;
+  state.jobStatus = review.status;
+  state.lastReview = { grade: grading.grade, message: grading.message, jobMessage: review.jobMessage };
+
   // 3. Apply end-of-season finances to the user's club (TV money reflects the
   //    division they were IN this season, before any move).
   const pnl = applySeasonFinances(uc);
+
+  // 3a. Exceeding the objective earns a small board-backed cash bonus; badly
+  //     missing it triggers a modest budget squeeze. Never bankrupting.
+  let bonus = 0;
+  if (grading.grade === 'exceeded') { bonus = Math.round(pnl.revenue.total * 0.10); uc.cash += bonus; }
+  else if (grading.grade === 'badly') { bonus = -Math.round(pnl.revenue.total * 0.05); uc.cash += bonus; }
+
+  // 3b. If the board sacked the manager, end the game cleanly here.
+  if (review.sacked) {
+    alert(
+      `Season ${state.season} review\n\n` +
+      `${grading.message}\n\n` +
+      `🔴 SACKED\n${review.jobMessage}\n\n` +
+      `You finished ${finalPos}${ord(finalPos)} in ${oldDivName} with board confidence at ${review.confidence}/100.`
+    );
+    if (confirm('Start a new game with a fresh club?')) {
+      localStorage.removeItem(SAVE_KEY);
+      newGame();
+    }
+    state.currentTab = 'dashboard';
+    document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'dashboard'));
+    render();
+    return;
+  }
 
   // 4. Promotion & relegation across the whole pyramid.
   const moves = applyPromotionRelegation(clubs, uc.id);
@@ -701,12 +796,20 @@ function onNewSeason() {
     c.players.forEach(p => { p.age++; p.appearances = 0; p.goals = 0; p.refreshValue(); });
   });
 
+  // 5a. Record how the user arrived in next season's division (drives the
+  //     board's objective — promoted clubs get a forgiving "survive" target).
+  state.lastMove = moves.userMove?.type ?? null;
+
   // 6. New fixtures for the user's (possibly new) division; refresh market.
   state.fixtures = generateFixtures(clubsInDivision(clubs, uc.division));
   state.currentWeek = 0;
   state.season++;
   state.market = generateMarket(uc);
   state.lastResults = [];
+
+  // 6a. The board sets a fresh objective for the new season & division.
+  state.objective = setLeagueObjective(uc, state.lastMove, clubsInDivision(clubs, uc.division).length);
+  state.financeObjective = setFinanceObjective();
 
   // 7. Build a clear end-of-season summary.
   let outcome;
@@ -723,13 +826,21 @@ function onNewSeason() {
     .map(m => `${state.league.clubsById[m.id].name} ↑`)
     .slice(0, 6);
 
+  const bonusLine = bonus > 0
+    ? `Board bonus: +£${fmt(bonus)}\n`
+    : bonus < 0 ? `Budget squeeze: −£${fmt(Math.abs(bonus))}\n` : '';
+
   alert(
     `Season ${state.season - 1} complete!\n` +
     `${oldDivName}: you finished ${finalPos}${ord(finalPos)}.\n\n` +
     `${outcome}\n\n` +
+    `📋 Board review: ${grading.message}\n` +
+    `${review.jobMessage} (confidence ${review.confidence}/100)\n\n` +
     `P&L: ${pnl.profit >= 0 ? '+' : '−'}£${fmt(Math.abs(pnl.profit))}\n` +
+    bonusLine +
     `New balance: £${fmt(uc.cash)}\n\n` +
-    (otherPromos.length ? `Also promoted: ${otherPromos.join(', ')}` : '')
+    `New objective: ${state.objective.label} (${state.objective.divisionName}).\n` +
+    (otherPromos.length ? `\nAlso promoted: ${otherPromos.join(', ')}` : '')
   );
 
   state.currentTab = 'dashboard';
@@ -749,6 +860,28 @@ function avgOverall(club) {
 function posOrder(pos) { return { GK: 0, DEF: 1, MID: 2, FWD: 3 }[pos] ?? 4; }
 function bandClass(band) {
   return band === 'safe' || band === 'ok' ? 'success' : band === 'warning' ? 'warning' : 'danger';
+}
+
+/* ---------- Objective UI helpers ---------- */
+function trackWord(s) {
+  return { ontrack: 'On track', close: 'Borderline', offtrack: 'Off track',
+           pending: 'Not started', unknown: '—' }[s] || '—';
+}
+function trackDot(s) {
+  return { ontrack: '●', close: '●', offtrack: '●', pending: '○', unknown: '○' }[s] || '○';
+}
+function trackClass(s) {
+  return s === 'ontrack' ? 'success' : s === 'close' ? 'warning' : s === 'offtrack' ? 'danger' : 'muted';
+}
+// A prominent banner shown only when the manager's job is under pressure.
+function jobBanner() {
+  if (state.jobStatus === 'at_risk') {
+    return `<p class="job-banner danger mt">⚠ Job at risk — the board wants a big improvement this season.</p>`;
+  }
+  if (state.jobStatus === 'watch') {
+    return `<p class="job-banner warning mt">The board is watching closely — deliver on this objective.</p>`;
+  }
+  return '';
 }
 
 init();

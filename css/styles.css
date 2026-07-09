@@ -210,6 +210,20 @@ tbody tr:hover td { background: rgba(255,255,255,.03); }
 .pill.mid { background: #12244a; color: var(--accent); }
 .pill.fwd { background: #3a0f1a; color: var(--danger); }
 
+/* ---------- Board objective status pills ---------- */
+.pill.obj-ontrack  { background: #0a2f1a; color: var(--accent-2); }
+.pill.obj-close    { background: #33260a; color: var(--warning); }
+.pill.obj-offtrack { background: #3a0f1a; color: var(--danger); }
+.pill.obj-pending,
+.pill.obj-unknown  { background: #22252c; color: var(--muted); }
+
+/* Job-security banner */
+.job-banner {
+  padding: 8px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; margin-bottom: 0;
+}
+.job-banner.danger  { background: rgba(255,95,111,0.12); border: 1px solid rgba(255,95,111,0.4); }
+.job-banner.warning { background: rgba(255,180,84,0.12); border: 1px solid rgba(255,180,84,0.4); }
+
 /* ---------- Match explanation ---------- */
 .explanation {
   background: var(--panel-2);
