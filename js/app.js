@@ -1,7 +1,7 @@
 // js/app.js
 // Main controller: global state, tab routing, rendering, game loop, save/load.
 
-import { createLeague } from './data.js';
+import { createLeague, DIVISIONS, TOP_DIVISION, BOTTOM_DIVISION } from './data.js';
 import { Club, teamRatings } from './club.js';
 import { Player } from './player.js';
 import { simulateMatch, HOME_BONUS } from './match.js';
@@ -12,8 +12,14 @@ import {
 import {
   generateMarket, evaluateBid, completeTransferIn, sellPlayer,
 } from './transfers.js';
+import {
+  clubsInDivision, divisionStandings, autoSimulateDivision,
+  applyPromotionRelegation, PROMOTE, RELEGATE,
+} from './pyramid.js';
 
-const SAVE_KEY = 'fco-elite-save-v1';
+// v2 save schema (multi-division). Old v1 saves are single-division and
+// incompatible, so they are simply ignored and a fresh pyramid game starts.
+const SAVE_KEY = 'fco-elite-save-v2';
 
 const state = {
   league: null,
@@ -38,15 +44,27 @@ function init() {
 function newGame() {
   const lg = createLeague('solihull');
   state.league = lg;
-  state.fixtures = generateFixtures(lg.clubs);
+  const uc = lg.clubsById[lg.userClubId];
+  // Only the user's own division plays interactively; other divisions are
+  // auto-simulated at season end.
+  state.fixtures = generateFixtures(clubsInDivision(lg.clubs, uc.division));
   state.currentWeek = 0;
   state.season = 1;
-  state.market = generateMarket(lg.clubsById[lg.userClubId]);
+  state.market = generateMarket(uc);
   state.lastResults = [];
 }
 
 function userClub() {
   return state.league.clubsById[state.league.userClubId];
+}
+
+function userDivision() {
+  return userClub().division;
+}
+
+// Clubs in the user's current division (for tables, fixtures, dashboard).
+function myDivisionClubs() {
+  return clubsInDivision(state.league.clubs, userDivision());
 }
 
 /* ------------------------------------------------------------------ */
@@ -175,8 +193,9 @@ function render() {
 /* ---------- Dashboard ---------- */
 function renderDashboard() {
   const club = userClub();
-  const table = standings(state.league.clubs);
+  const table = divisionStandings(state.league.clubs, club.division);
   const pos = table.indexOf(club) + 1;
+  const divInfo = DIVISIONS[club.division];
   const totalWeeks = state.fixtures.length;
   const done = state.currentWeek;
   const nextWeek = state.fixtures[state.currentWeek];
@@ -198,7 +217,7 @@ function renderDashboard() {
       <div class="flex-between">
         <div>
           <h2 class="mb0">${club.name}</h2>
-          <p class="muted small">Season ${state.season} · Matchweek ${Math.min(done + 1, totalWeeks)} of ${totalWeeks}</p>
+          <p class="muted small">${divInfo.name} · Season ${state.season} · Matchweek ${Math.min(done + 1, totalWeeks)} of ${totalWeeks}</p>
         </div>
         <div class="center">
           <div class="stat span" style="min-width:70px"><strong>Position</strong><span class="gold">${pos}${ord(pos)}</span></div>
@@ -387,37 +406,61 @@ function renderFixtures() {
     </div>`;
 }
 
-/* ---------- Table ---------- */
+/* ---------- Table (full pyramid) ---------- */
 function renderTable() {
   const club = userClub();
-  const table = standings(state.league.clubs);
-  const rows = table.map((c, i) => `
-    <tr class="${c === club ? 'highlight-row' : ''}">
-      <td class="num">${i + 1}</td>
-      <td>${c.name}</td>
-      <td class="num">${c.played}</td>
-      <td class="num">${c.won}</td>
-      <td class="num">${c.drawn}</td>
-      <td class="num">${c.lost}</td>
-      <td class="num">${c.gf}</td>
-      <td class="num">${c.ga}</td>
-      <td class="num">${c.goalDiff > 0 ? '+' : ''}${c.goalDiff}</td>
-      <td class="num"><strong>${c.points}</strong></td>
-    </tr>`).join('');
+  let html = '';
 
-  document.getElementById('table').innerHTML = `
-    <div class="card">
-      <h2>League Table</h2>
-      <table>
-        <thead><tr>
-          <th class="num">#</th><th>Club</th><th class="num">P</th><th class="num">W</th>
-          <th class="num">D</th><th class="num">L</th><th class="num">GF</th><th class="num">GA</th>
-          <th class="num">GD</th><th class="num">Pts</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <p class="muted small mt">Top 3 promoted · Bottom 2 relegated (applied at season end).</p>
-    </div>`;
+  for (let d = TOP_DIVISION; d <= BOTTOM_DIVISION; d++) {
+    const divInfo = DIVISIONS[d];
+    const table = divisionStandings(state.league.clubs, d);
+    const size = table.length;
+
+    const rows = table.map((c, i) => {
+      const rank = i + 1;
+      // Promotion zone (green) / relegation zone (red) markers.
+      const promo = d > TOP_DIVISION && rank <= PROMOTE;
+      const releg = d < BOTTOM_DIVISION && rank > size - RELEGATE;
+      const zone = promo ? 'zone-promo' : releg ? 'zone-releg' : '';
+      return `<tr class="${c === club ? 'highlight-row' : ''} ${zone}">
+        <td class="num">${rank}</td>
+        <td>${c.name}${c === club ? ' <span class="small gold">(you)</span>' : ''}</td>
+        <td class="num">${c.played}</td>
+        <td class="num">${c.won}</td>
+        <td class="num">${c.drawn}</td>
+        <td class="num">${c.lost}</td>
+        <td class="num">${c.gf}</td>
+        <td class="num">${c.ga}</td>
+        <td class="num">${c.goalDiff > 0 ? '+' : ''}${c.goalDiff}</td>
+        <td class="num"><strong>${c.points}</strong></td>
+      </tr>`;
+    }).join('');
+
+    const legend = [];
+    if (d > TOP_DIVISION) legend.push('<span class="dot-promo"></span> Promotion');
+    if (d < BOTTOM_DIVISION) legend.push('<span class="dot-releg"></span> Relegation');
+
+    html += `
+      <div class="card">
+        <div class="flex-between">
+          <h2 class="mb0">${divInfo.name} <span class="muted small">(${divInfo.short})</span></h2>
+          <span class="small muted">${legend.join(' &nbsp; ')}</span>
+        </div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th class="num">#</th><th>Club</th><th class="num">P</th><th class="num">W</th>
+            <th class="num">D</th><th class="num">L</th><th class="num">GF</th><th class="num">GA</th>
+            <th class="num">GD</th><th class="num">Pts</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        </div>
+      </div>`;
+  }
+
+  html += `<p class="muted small">Top ${PROMOTE} of each division promoted · Bottom ${RELEGATE} relegated (applied at season end). Other divisions are auto-simulated.</p>`;
+  document.getElementById('table').innerHTML = html;
 }
 
 /* ---------- Transfers ---------- */
@@ -632,34 +675,63 @@ function clampMult(v) { return Math.max(0.85, Math.min(1.15, +v.toFixed(3))); }
 
 function onNewSeason() {
   const clubs = state.league.clubs;
-
-  // Apply end-of-season finances.
   const uc = userClub();
+
+  // 1. Auto-simulate the divisions the user did NOT manage this season, so the
+  //    whole pyramid has a complete set of results before promotion/relegation.
+  for (let d = TOP_DIVISION; d <= BOTTOM_DIVISION; d++) {
+    if (d !== uc.division) autoSimulateDivision(clubs, d, state.league.clubsById);
+  }
+
+  // 2. Record the user's finishing position in their own division.
+  const myTable = divisionStandings(clubs, uc.division);
+  const finalPos = myTable.indexOf(uc) + 1;
+  const oldDivName = DIVISIONS[uc.division].name;
+
+  // 3. Apply end-of-season finances to the user's club (TV money reflects the
+  //    division they were IN this season, before any move).
   const pnl = applySeasonFinances(uc);
 
-  // Reputation nudges from final position.
-  const table = standings(clubs);
-  table.forEach((c, i) => {
-    if (i === 0) c.reputation = Math.min(10, c.reputation + 1);
-    else if (i >= table.length - 2) c.reputation = Math.max(1, c.reputation - 0.5);
-    c.reputation = +c.reputation.toFixed(1);
-  });
+  // 4. Promotion & relegation across the whole pyramid.
+  const moves = applyPromotionRelegation(clubs, uc.id);
 
-  const finalPos = table.indexOf(uc) + 1;
-
-  // Reset records, age players, regenerate fixtures.
+  // 5. Reset records, age players, refresh values.
   clubs.forEach(c => {
     c.resetSeasonRecord();
     c.players.forEach(p => { p.age++; p.appearances = 0; p.goals = 0; p.refreshValue(); });
   });
 
-  state.fixtures = generateFixtures(clubs);
+  // 6. New fixtures for the user's (possibly new) division; refresh market.
+  state.fixtures = generateFixtures(clubsInDivision(clubs, uc.division));
   state.currentWeek = 0;
   state.season++;
   state.market = generateMarket(uc);
   state.lastResults = [];
 
-  alert(`Season ${state.season - 1} complete!\nYou finished ${finalPos}${ord(finalPos)}.\n\nP&L: ${pnl.profit >= 0 ? '+' : '−'}£${fmt(Math.abs(pnl.profit))}\nNew balance: £${fmt(uc.cash)}`);
+  // 7. Build a clear end-of-season summary.
+  let outcome;
+  if (moves.userMove?.type === 'promoted') {
+    outcome = `🎉 PROMOTED to ${DIVISIONS[uc.division].name}!`;
+  } else if (moves.userMove?.type === 'relegated') {
+    outcome = `⬇️ Relegated to ${DIVISIONS[uc.division].name}.`;
+  } else {
+    outcome = `Staying in ${DIVISIONS[uc.division].name}.`;
+  }
+
+  const otherPromos = moves.promoted
+    .filter(m => m.id !== uc.id)
+    .map(m => `${state.league.clubsById[m.id].name} ↑`)
+    .slice(0, 6);
+
+  alert(
+    `Season ${state.season - 1} complete!\n` +
+    `${oldDivName}: you finished ${finalPos}${ord(finalPos)}.\n\n` +
+    `${outcome}\n\n` +
+    `P&L: ${pnl.profit >= 0 ? '+' : '−'}£${fmt(Math.abs(pnl.profit))}\n` +
+    `New balance: £${fmt(uc.cash)}\n\n` +
+    (otherPromos.length ? `Also promoted: ${otherPromos.join(', ')}` : '')
+  );
+
   state.currentTab = 'dashboard';
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'dashboard'));
   render();

@@ -1,6 +1,9 @@
 // js/data.js
-// Seed league: 8 clubs with procedurally generated squads. The user starts at
-// Solihull FC (lowest reputation) so the "non-league to elite" climb is real.
+// Seed pyramid: 24 clubs across 3 divisions (8 per division).
+//   division 1 = top tier (hardest, richest)
+//   division 2 = middle tier
+//   division 3 = bottom tier — where the user (Solihull FC) starts.
+// Squad strength is tiered by division so the climb genuinely gets harder.
 
 import { Club } from './club.js';
 import { Player } from './player.js';
@@ -37,8 +40,8 @@ function makePlayer(rand, tier) {
 
   const name = FIRST[Math.floor(rand() * FIRST.length)] + ' ' + LAST[Math.floor(rand() * LAST.length)];
   const ovr = Player.overallOf({ attack, defense, passing, finish, position: pos });
-  // Weekly wage — tuned so a mid-table lower-league squad is affordable on its
-  // division's TV/commercial income (avoids the death-spiral the brief warns of).
+  // Weekly wage — tuned so a mid-table squad is affordable on its division's
+  // TV/commercial income (avoids the death-spiral the brief warns of).
   const wage = Math.round((Math.pow(ovr / 10, 2.6) * 14) / 25) * 25;
   const form = +(0.9 + rand() * 0.2).toFixed(2);
   const morale = +(0.9 + rand() * 0.2).toFixed(2);
@@ -62,23 +65,45 @@ function makeSquad(seed, tier, size = 18) {
   return squad;
 }
 
-// League definition: [id, name, short, reputation, tier, cash, capacity, ticket, commercial]
+// Club definition: [id, name, short, division, reputation, tier, cash, capacity, ticket, commercial]
+// Tiers ascend with division quality: D3 ~40–48, D2 ~50–60, D1 ~62–74.
 const DEFS = [
-  ['solihull',  'Solihull FC',        'SOL', 1,  40,   250_000,  3_000, 18,  120_000],
-  ['bristol',   'Bristol Rovers',     'BRS', 3,  52, 1_200_000,  8_000, 24,  500_000],
-  ['wrexham',   'Wrexham Town',       'WRX', 4,  56, 2_000_000, 12_000, 26,  800_000],
-  ['stockport', 'Stockport County',   'STK', 3,  50, 1_000_000,  9_000, 22,  450_000],
-  ['notts',     'Notts United',       'NTS', 5,  60, 3_500_000, 18_000, 30, 1_400_000],
-  ['grimsby',   'Grimsby Athletic',   'GRM', 2,  46,   600_000,  6_000, 20,  260_000],
-  ['chester',   'Chester City',       'CHS', 4,  54, 1_600_000, 10_000, 25,  650_000],
-  ['barnet',    'Barnet Rangers',     'BNT', 3,  49,   900_000,  7_500, 22,  400_000],
+  // ---- Division 3 (bottom tier) — the user starts here ----
+  ['solihull',  'Solihull FC',       'SOL', 3, 1, 40,   250_000,  3_000, 18,  120_000],
+  ['grimsby',   'Grimsby Athletic',  'GRM', 3, 2, 44,   600_000,  6_000, 20,  260_000],
+  ['barnet',    'Barnet Rangers',    'BNT', 3, 2, 46,   900_000,  7_500, 22,  400_000],
+  ['woking',    'Woking Town',       'WOK', 3, 2, 45,   700_000,  5_500, 20,  240_000],
+  ['altrincham','Altrincham FC',     'ALT', 3, 2, 43,   550_000,  5_000, 19,  210_000],
+  ['dagenham',  'Dagenham & R.',     'DAG', 3, 2, 47,   800_000,  6_500, 21,  320_000],
+  ['boreham',   'Boreham Wood',      'BOR', 3, 1, 42,   450_000,  4_500, 18,  180_000],
+  ['halifax',   'Halifax United',    'HAL', 3, 2, 48,   950_000,  7_000, 22,  380_000],
+
+  // ---- Division 2 (middle tier) ----
+  ['bristol',   'Bristol Rovers',    'BRS', 2, 3, 52, 1_200_000,  8_000, 24,  500_000],
+  ['stockport', 'Stockport County',  'STK', 2, 3, 50, 1_000_000,  9_000, 22,  450_000],
+  ['chester',   'Chester City',      'CHS', 2, 4, 54, 1_600_000, 10_000, 25,  650_000],
+  ['wrexham',   'Wrexham Town',      'WRX', 2, 4, 56, 2_000_000, 12_000, 26,  800_000],
+  ['mansfield', 'Mansfield Town',    'MAN', 2, 3, 53, 1_400_000, 10_000, 24,  600_000],
+  ['newport',   'Newport City',      'NEW', 2, 3, 51, 1_100_000,  8_500, 23,  480_000],
+  ['exeter',    'Exeter Athletic',   'EXE', 2, 4, 55, 1_800_000, 11_000, 25,  720_000],
+  ['swindon',   'Swindon Rangers',   'SWN', 2, 3, 52, 1_300_000,  9_500, 24,  560_000],
+
+  // ---- Division 1 (top tier) ----
+  ['notts',     'Notts United',      'NTS', 1, 6, 64, 5_500_000, 20_000, 32, 2_200_000],
+  ['sunderland','Sunderland City',   'SUN', 1, 7, 70, 9_000_000, 32_000, 36, 4_000_000],
+  ['leeds',     'Leeds Athletic',    'LDS', 1, 8, 74,14_000_000, 38_000, 40, 6_500_000],
+  ['sheffield', 'Sheffield Rangers', 'SHF', 1, 6, 66, 6_500_000, 24_000, 33, 2_800_000],
+  ['norwich',   'Norwich United',    'NOR', 1, 6, 65, 6_000_000, 22_000, 32, 2_500_000],
+  ['boro',      'Boro Town',         'BRO', 1, 5, 62, 4_500_000, 19_000, 30, 1_900_000],
+  ['coventry',  'Coventry City',     'COV', 1, 6, 67, 7_000_000, 26_000, 34, 3_100_000],
+  ['ipswich',   'Ipswich Rovers',    'IPS', 1, 7, 69, 8_000_000, 28_000, 35, 3_600_000],
 ];
 
 export function createLeague(userClubId = 'solihull') {
-  const clubs = DEFS.map(([id, name, short, rep, tier, cash, cap, ticket, comm], i) =>
+  const clubs = DEFS.map(([id, name, short, div, rep, tier, cash, cap, ticket, comm], i) =>
     new Club({
       id, name, short,
-      division: 3,                 // all start in the same division
+      division: div,
       reputation: rep,
       cash,
       baseCommercial: comm,
@@ -94,3 +119,12 @@ export function createLeague(userClubId = 'solihull') {
 
   return { clubs, clubsById, userClubId };
 }
+
+// Division metadata for the UI. Index by division number (1–3).
+export const DIVISIONS = {
+  1: { name: 'Premier Division', short: 'Div 1' },
+  2: { name: 'Championship',     short: 'Div 2' },
+  3: { name: 'League Two',       short: 'Div 3' },
+};
+export const TOP_DIVISION = 1;
+export const BOTTOM_DIVISION = 3;

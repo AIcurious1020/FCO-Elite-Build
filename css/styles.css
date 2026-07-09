@@ -134,6 +134,11 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { padding: 9px 8px; text-align: left; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
 tr.highlight-row td { background: rgba(79,138,255,.12); font-weight: 600; }
+tr.zone-promo td:first-child { box-shadow: inset 3px 0 0 var(--accent-2); }
+tr.zone-releg td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+.dot-promo, .dot-releg { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; margin-right: 2px; }
+.dot-promo { background: var(--accent-2); }
+.dot-releg { background: var(--danger); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tbody tr:hover td { background: rgba(255,255,255,.03); }
 

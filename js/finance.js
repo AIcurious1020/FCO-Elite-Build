@@ -3,8 +3,10 @@
 // TV/prize money scales with division, and wage warnings are advisory, not
 // instant-kill. A single bad season hurts but never bankrupts a well-run club.
 
-// Division prize/TV money per season (£). Index 0 = top tier.
-const TV_MONEY = [42_000_000, 8_000_000, 2_400_000, 900_000, 300_000, 90_000];
+// Division prize/TV money per season (£), indexed by division number.
+//   [0] unused · [1] Div 1 (top) · [2] Div 2 · [3] Div 3 (bottom)
+// The gap between tiers is the reward for promotion and the sting of the drop.
+const TV_MONEY = [0, 18_000_000, 4_000_000, 900_000];
 
 // Matchday revenue for one home league game.
 export function matchdayRevenue(club, winRatio = 0.4) {
