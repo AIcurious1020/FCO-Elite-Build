@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FCO-Elite — Football Club Owner</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-top">
+      <h1>FCO-<span class="accent">Elite</span></h1>
+      <div class="club-badge" id="clubBadge">
+        <span class="club-name" id="headerClubName">—</span>
+        <span class="club-cash" id="headerCash">£0</span>
+      </div>
+    </div>
+    <nav class="top-nav" id="topNav">
+      <button data-tab="dashboard" class="active">Dashboard</button>
+      <button data-tab="squad">Squad</button>
+      <button data-tab="tactics">Tactics</button>
+      <button data-tab="fixtures">Fixtures</button>
+      <button data-tab="table">Table</button>
+      <button data-tab="transfers">Transfers</button>
+      <button data-tab="finance">Finance</button>
+      <button data-tab="stadium">Stadium</button>
+    </nav>
+  </header>
+
+  <main class="main">
+    <section id="dashboard" class="tab-content"></section>
+    <section id="squad" class="tab-content" hidden></section>
+    <section id="tactics" class="tab-content" hidden></section>
+    <section id="fixtures" class="tab-content" hidden></section>
+    <section id="table" class="tab-content" hidden></section>
+    <section id="transfers" class="tab-content" hidden></section>
+    <section id="finance" class="tab-content" hidden></section>
+    <section id="stadium" class="tab-content" hidden></section>
+  </main>
+
+  <!-- Match modal -->
+  <div id="matchModal" class="modal" hidden>
+    <div class="modal-box">
+      <div id="matchModalContent"></div>
+      <button class="btn" id="closeMatchModal">Close</button>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <span id="saveStatus" class="muted">Autosave on</span>
+    <button class="btn-ghost" id="resetGame">Reset Game</button>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
