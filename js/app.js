@@ -32,10 +32,14 @@ import {
 import {
   matchStory, divisionStory, transferMarketStory, transferCompletedStory,
   infrastructureStory, seasonReviewStories, objectiveStory, injuryStory,
+  cupStory, cupRoundStory,
 } from './news.js';
 import {
   processWeeklyInjuries, injuredPlayers, availabilityByPosition, missingStarters,
 } from './injuries.js';
+import {
+  createCup, cupCurrentRound, cupCanPlay, cupStatus, playCupRound,
+} from './cup.js';
 
 // v3 save schema (multi-division + board objectives). Older saves are
 // incompatible, so they are simply ignored and a fresh pyramid game starts.
@@ -62,6 +66,8 @@ const state = {
   developmentReport: null,
   financeReport: null,
   clubHistory: null,
+  cup: null,
+  lastCupResults: [],
 };
 
 /* ------------------------------------------------------------------ */
@@ -94,6 +100,8 @@ function newGame() {
   state.developmentReport = null;
   state.financeReport = null;
   state.clubHistory = createClubHistory(uc);
+  state.cup = createCup(lg.clubs, state.season);
+  state.lastCupResults = [];
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
@@ -143,6 +151,8 @@ function save() {
       developmentReport: state.developmentReport,
       financeReport: state.financeReport,
       clubHistory: state.clubHistory,
+      cup: state.cup,
+      lastCupResults: state.lastCupResults.map(serialiseCupResult),
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -177,6 +187,8 @@ function load() {
     state.developmentReport = data.developmentReport ?? null;
     state.financeReport = data.financeReport ?? null;
     state.clubHistory = data.clubHistory ?? createClubHistory(clubsById[data.userClubId]);
+    state.cup = data.cup ?? createCup(clubs, data.season || 1);
+    state.lastCupResults = (data.lastCupResults || []).map(r => hydrateCupResult(r, clubsById));
     // Safety: if an objective is missing (older-but-compatible save), set one.
     if (!state.objective) {
       const uc = clubsById[data.userClubId];
@@ -199,6 +211,21 @@ function serialiseClub(c) {
     played: c.played, won: c.won, drawn: c.drawn, lost: c.lost,
     gf: c.gf, ga: c.ga, points: c.points,
     players: c.players.map(serialisePlayer),
+  };
+}
+function serialiseCupResult(r) {
+  return {
+    home: r.home.id, away: r.away.id, winner: r.winner.id,
+    homeGoals: r.homeGoals, awayGoals: r.awayGoals, result: r.result,
+    xg: r.xg, ratings: r.ratings, timeline: r.timeline, tiebreak: r.tiebreak,
+  };
+}
+function hydrateCupResult(r, clubsById) {
+  return {
+    ...r,
+    home: clubsById[r.home],
+    away: clubsById[r.away],
+    winner: clubsById[r.winner],
   };
 }
 function deserialiseClub(d) {
@@ -269,6 +296,7 @@ function render() {
     squad: renderSquad,
     tactics: renderTactics,
     fixtures: renderFixtures,
+    cup: renderCup,
     table: renderTable,
     transfers: renderTransfers,
     finance: renderFinance,
@@ -298,6 +326,8 @@ function renderDashboard() {
     ? nextWeek.matches.find(m => m.home === club.id || m.away === club.id)
     : null;
   const preview = nextFixture ? matchPreview(nextFixture) : null;
+  const cupRound = cupCurrentRound(state.cup);
+  const cupReady = cupCanPlay(state.cup, state.currentWeek);
 
   document.getElementById('dashboard').innerHTML = `
     <div class="card">
@@ -356,6 +386,18 @@ function renderDashboard() {
       ${!nextFixture ? `<button class="btn btn-success btn-lg mt" id="newSeason">Start Season ${state.season + 1}</button>` : ''}
     </div>
 
+    <div class="card">
+      <div class="flex-between">
+        <h2 class="mb0">Chairman Cup</h2>
+        <span class="pill obj-${cupStatus(state.cup, club.id).band}">${cupStatus(state.cup, club.id).label}</span>
+      </div>
+      ${renderCupMini(cupRound, cupReady)}
+      <div class="flex mt action-row">
+        <button class="btn btn-sm" id="playCupRound" ${!cupReady ? 'disabled' : ''}>Play Cup Round</button>
+        <button class="btn-ghost btn-sm" id="openCup">Open cup</button>
+      </div>
+    </div>
+
     <div class="grid">
       <div class="card mb0">
         <h3>Squad</h3>
@@ -381,8 +423,15 @@ function renderDashboard() {
 
   const playBtn = document.getElementById('playNext');
   if (playBtn) playBtn.addEventListener('click', onPlayNext);
+  const playCupBtn = document.getElementById('playCupRound');
+  if (playCupBtn) playCupBtn.addEventListener('click', onPlayCupRound);
+  const openCup = document.getElementById('openCup');
+  if (openCup) openCup.addEventListener('click', () => switchTab('cup'));
   const ns = document.getElementById('newSeason');
-  if (ns) ns.addEventListener('click', onNewSeason);
+  if (ns) {
+    ns.disabled = state.cup?.status === 'active';
+    ns.addEventListener('click', onNewSeason);
+  }
   const openNews = document.getElementById('openNews');
   if (openNews) openNews.addEventListener('click', () => switchTab('news'));
 }
@@ -489,7 +538,7 @@ function renderNews() {
         <h2 class="mb0">News Centre</h2>
         <span class="muted small">${state.inbox.length} stories this save</span>
       </div>
-      <p class="muted small mt">Stories are generated from real club events: results, board pressure, transfers, academy, finances, infrastructure, and league movement.</p>
+      <p class="muted small mt">Stories are generated from real club events: results, cup runs, board pressure, transfers, academy, finances, infrastructure, and league movement.</p>
       ${renderNewsList(state.inbox, false)}
     </div>`;
 }
@@ -588,6 +637,21 @@ function renderMatchPreview(preview) {
       ${preview.factors.map(f => `<li>${f}</li>`).join('')}
       ${missing.length ? `<li class="danger">Unavailable: ${missing.map(p => `${p.name} (${p.injuryWeeks}w)`).join(', ')}.</li>` : ''}
     </ul>`;
+}
+
+function renderCupMini(round, ready) {
+  if (!state.cup) return '<p class="muted small mt">Cup draw pending.</p>';
+  const status = cupStatus(state.cup, userClub().id);
+  if (!round) return `<p class="muted small mt">${status.text}</p>`;
+  const userTie = round.fixtures.find(f => f.home === userClub().id || f.away === userClub().id);
+  const line = userTie
+    ? `${state.league.clubsById[userTie.home].short} vs ${state.league.clubsById[userTie.away].short}`
+    : status.text;
+  return `
+    <p class="muted small mt">${round.name} unlocks at matchweek ${round.unlockWeek}. Winner prize this round: £${fmt(round.prize)}.</p>
+    <p><strong>${line}</strong></p>
+    <p class="small ${ready ? 'success' : 'muted'}">${ready ? 'Round ready to play.' : `Reach matchweek ${round.unlockWeek} to play this round.`}</p>
+    ${state.cup.status === 'active' && !state.fixtures[state.currentWeek] ? '<p class="small warning">Complete the active cup before starting next season.</p>' : ''}`;
 }
 
 function probCell(label, value, tone) {
@@ -810,6 +874,96 @@ function renderFixtures() {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+}
+
+/* ---------- Cup ---------- */
+function renderCup() {
+  const club = userClub();
+  const cup = state.cup || createCup(state.league.clubs, state.season);
+  const current = cupCurrentRound(cup);
+  const status = cupStatus(cup, club.id);
+  const ready = cupCanPlay(cup, state.currentWeek);
+  const rounds = cup.rounds.map((r, i) => `
+    <tr class="${i === cup.roundIndex && cup.status === 'active' ? 'highlight-row' : ''}">
+      <td>${r.name}</td>
+      <td class="num">MW ${r.unlockWeek}</td>
+      <td class="num">£${fmt(r.prize)}</td>
+      <td>${r.played ? 'Played' : i === cup.roundIndex ? (ready ? 'Ready' : 'Scheduled') : 'Pending'}</td>
+    </tr>`).join('');
+
+  document.getElementById('cup').innerHTML = `
+    <div class="card">
+      <div class="flex-between">
+        <div>
+          <h2 class="mb0">${cup.name}</h2>
+          <p class="muted small">Season ${cup.season} · knockout cup across the full pyramid</p>
+        </div>
+        <span class="pill obj-${status.band}">${status.label}</span>
+      </div>
+      <p class="muted mt">${status.text}</p>
+      <div class="stat-row mt">
+        <div class="stat"><strong>Current Round</strong><span>${current ? current.short : 'Done'}</span></div>
+        <div class="stat"><strong>Prize</strong><span>${current ? `£${fmt(current.prize)}` : '—'}</span></div>
+        <div class="stat"><strong>Champion</strong><span>${cup.championId ? state.league.clubsById[cup.championId].short : '—'}</span></div>
+      </div>
+      <button class="btn mt" id="cupPlay" ${!ready ? 'disabled' : ''}>Play Current Round</button>
+    </div>
+
+    <div class="grid">
+      <div class="card mb0">
+        <h3>Current Draw</h3>
+        ${renderCupFixtures(current)}
+      </div>
+      <div class="card mb0">
+        <h3>Round Schedule</h3>
+        <table><thead><tr><th>Round</th><th class="num">Unlock</th><th class="num">Prize</th><th>Status</th></tr></thead><tbody>${rounds}</tbody></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Latest Cup Results</h3>
+      ${renderCupResults(state.lastCupResults)}
+    </div>`;
+
+  const playBtn = document.getElementById('cupPlay');
+  if (playBtn) playBtn.addEventListener('click', onPlayCupRound);
+}
+
+function renderCupFixtures(round) {
+  if (!round) return '<p class="muted small">Competition complete.</p>';
+  const rows = round.fixtures.map(f => {
+    const home = state.league.clubsById[f.home];
+    const away = state.league.clubsById[f.away];
+    const involved = home === userClub() || away === userClub();
+    const preview = cupFixturePreview(home, away);
+    return `<tr class="${involved ? 'highlight-row' : ''}">
+      <td>${home.name}</td>
+      <td class="center">vs</td>
+      <td>${away.name}</td>
+      <td class="num small">${preview.home}% / ${preview.draw}% / ${preview.away}%</td>
+    </tr>`;
+  }).join('');
+  return `<table><thead><tr><th>Home</th><th></th><th>Away</th><th class="num">H/D/A</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderCupResults(results) {
+  if (!results.length) return '<p class="muted small">No cup round played yet.</p>';
+  const rows = results.map(r => {
+    const involved = r.home === userClub() || r.away === userClub();
+    const tie = r.tiebreak ? `<span class="muted small"> · pens ${r.tiebreak.penaltyScore}</span>` : '';
+    return `<tr class="${involved ? 'highlight-row' : ''}">
+      <td>${r.home.name}</td>
+      <td class="center"><strong>${r.homeGoals} – ${r.awayGoals}</strong>${tie}</td>
+      <td>${r.away.name}</td>
+      <td>${r.winner.short}</td>
+    </tr>`;
+  }).join('');
+  return `<table><thead><tr><th>Home</th><th class="center">Score</th><th>Away</th><th>Advances</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function cupFixturePreview(home, away) {
+  const probs = outcomeProbabilities(teamRatings(home, HOME_BONUS), teamRatings(away, 0));
+  return { home: pct(probs.homeWin), draw: pct(probs.draw), away: pct(probs.awayWin) };
 }
 
 /* ---------- Table (full pyramid) ---------- */
@@ -1212,6 +1366,46 @@ function onPlayNext() {
   render();
 }
 
+function onPlayCupRound() {
+  if (!cupCanPlay(state.cup, state.currentWeek)) return;
+  const uc = userClub();
+  const played = playCupRound(state.cup, state.league.clubsById);
+  if (!played.round) return;
+
+  state.lastCupResults = played.results;
+  updateFormAndMorale(played.results);
+  processWeeklyInjuries(played.results).forEach(event => addStory(injuryStory(event, uc)));
+
+  const mine = played.results.find(r => r.home === uc || r.away === uc);
+  if (mine) {
+    const won = mine.winner === uc;
+    const prize = won ? played.round.prize : 0;
+    if (prize) uc.cash += prize;
+    state.cup.userBestRound = played.round.name;
+    addStory(cupStory({ result: mine, round: played.round, userClub: uc, prize }));
+    if (played.championId === uc.id) {
+      state.clubHistory = state.clubHistory || createClubHistory(uc);
+      state.clubHistory.honours = [
+        ...(state.clubHistory.honours || []),
+        { season: state.season, label: `Won ${state.cup.name}` },
+      ];
+    }
+  }
+
+  addStory(cupRoundStory({
+    round: played.round,
+    results: played.results,
+    clubsById: state.league.clubsById,
+    championId: played.championId,
+  }));
+
+  const userLine = mine
+    ? `${mine.home.short} ${mine.homeGoals}-${mine.awayGoals} ${mine.away.short}${mine.tiebreak ? `, pens ${mine.tiebreak.penaltyScore}` : ''}.`
+    : `${played.round.name} complete.`;
+  alert(`${state.cup.name}: ${played.round.name}\n\n${userLine}`);
+  render();
+}
+
 function showMatchModal(r) {
   const uc = userClub();
   const events = [];
@@ -1272,6 +1466,14 @@ function driftPlayer(p, dir) {
 function clampMult(v) { return Math.max(0.85, Math.min(1.15, +v.toFixed(3))); }
 
 function onNewSeason() {
+  if (state.cup?.status === 'active') {
+    alert('Finish the active Chairman Cup before starting the next season.');
+    state.currentTab = 'cup';
+    document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'cup'));
+    render();
+    return;
+  }
+
   const clubs = state.league.clubs;
   const uc = userClub();
 
@@ -1377,6 +1579,8 @@ function onNewSeason() {
   state.season++;
   state.market = generateMarket(uc);
   state.lastResults = [];
+  state.cup = createCup(clubs, state.season);
+  state.lastCupResults = [];
 
   // 6a. The board sets a fresh objective for the new season & division.
   state.objective = setLeagueObjective(uc, state.lastMove, clubsInDivision(clubs, uc.division).length);
@@ -1494,6 +1698,9 @@ function storyCategory(type) {
     development: 'Development',
     history: 'Club',
     league: 'League',
+    cup: 'Cup',
+    'cup-good': 'Cup',
+    'cup-bad': 'Cup',
     injury: 'Squad',
     fitness: 'Squad',
     'result-good': 'Match',

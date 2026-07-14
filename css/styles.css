@@ -223,6 +223,9 @@ tr.unavailable-row td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
 .inbox-dot.history { background: var(--warning); }
 .inbox-dot.development { background: var(--accent-2); }
 .inbox-dot.league { background: var(--gold); }
+.inbox-dot.cup,
+.inbox-dot.cup-good { background: var(--accent-2); }
+.inbox-dot.cup-bad { background: var(--danger); }
 .inbox-dot.injury { background: var(--danger); }
 .inbox-dot.fitness { background: var(--accent-2); }
 .inbox-dot.result-good { background: var(--accent-2); }

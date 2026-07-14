@@ -128,6 +128,57 @@ export function injuryStory(event, userClub) {
   };
 }
 
+export function cupStory({ result, round, userClub, prize = 0 }) {
+  const isHome = result.home === userClub;
+  const opponent = isHome ? result.away : result.home;
+  const userGoals = isHome ? result.homeGoals : result.awayGoals;
+  const oppGoals = isHome ? result.awayGoals : result.homeGoals;
+  const won = result.winner === userClub;
+  const shootout = result.tiebreak ? ` ${result.tiebreak.method}: ${result.tiebreak.penaltyScore}.` : '';
+  const prizeLine = won && prize ? ` Prize money: £${fmt(prize)}.` : '';
+  return {
+    title: won
+      ? `${userClub.short} advance in the ${round.short}`
+      : `${userClub.short} exit the ${round.short}`,
+    body: `${userClub.name} ${won ? 'beat' : 'lost to'} ${opponent.name} ${userGoals}-${oppGoals}.${shootout} xG: ${result.xg.home}-${result.xg.away}.${prizeLine}`,
+    type: won ? 'cup-good' : 'cup-bad',
+    category: 'Cup',
+    importance: won ? 3 : 2,
+  };
+}
+
+export function cupRoundStory({ round, results, clubsById, championId }) {
+  const upsets = results.filter(r => r.winner.reputation < (r.winner === r.home ? r.away.reputation : r.home.reputation));
+  if (championId) {
+    const champion = clubsById[championId];
+    return {
+      title: `${champion.short} lift the Chairman Cup`,
+      body: `${champion.name} win the final and add the season's first major knockout story.`,
+      type: 'cup-good',
+      category: 'Cup',
+      importance: 3,
+    };
+  }
+  if (upsets.length) {
+    const r = upsets[0];
+    const loser = r.winner === r.home ? r.away : r.home;
+    return {
+      title: `${r.winner.short} spring cup upset`,
+      body: `${r.winner.name} knocked out ${loser.name} in the ${round.name}, keeping the cup draw unpredictable but traceable.`,
+      type: 'cup',
+      category: 'Cup',
+      importance: 2,
+    };
+  }
+  return {
+    title: `${round.name} complete`,
+    body: `${results.length} ties played. The ${round.short} field is now set for the next stage.`,
+    type: 'cup',
+    category: 'Cup',
+    importance: 1,
+  };
+}
+
 function fmt(n) {
   return Math.round(n).toLocaleString('en-GB');
 }
