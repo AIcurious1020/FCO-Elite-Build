@@ -217,6 +217,7 @@ tbody tr:hover td { background: rgba(255,255,255,.03); }
 }
 .inbox-dot.board { background: var(--accent); }
 .inbox-dot.finance { background: var(--gold); }
+.inbox-dot.transfer { background: var(--accent); }
 .inbox-dot.result-good { background: var(--accent-2); }
 .inbox-dot.result-neutral { background: var(--warning); }
 .inbox-dot.result-bad { background: var(--danger); }
@@ -265,6 +266,69 @@ tbody tr:hover td { background: rgba(255,255,255,.03); }
 }
 .factor-list li { margin: 4px 0; }
 .action-row { align-items: stretch; }
+
+/* ---------- Transfers ---------- */
+.need-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.need-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+.need-card span,
+.need-card small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.need-card strong {
+  display: block;
+  margin: 3px 0;
+  font-size: 20px;
+}
+.need-card.urgent { border-color: rgba(255,95,111,.55); }
+.need-card.upgrade { border-color: rgba(255,180,84,.55); }
+.need-card.covered { border-color: rgba(53,208,127,.35); }
+.transfer-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+.transfer-toolbar label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.checkbox-row {
+  display: flex !important;
+  grid-template-columns: none;
+  flex-direction: row;
+  align-items: center;
+  min-height: 38px;
+}
+.checkbox-row input {
+  width: auto;
+  accent-color: var(--accent);
+}
+.transfer-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
 
 /* ---------- Utilities ---------- */
 .muted { color: var(--muted); }
@@ -369,4 +433,9 @@ select, input {
   th, td { padding: 7px 5px; font-size: 12px; }
   .prob-grid { grid-template-columns: 1fr; }
   .inbox-title-row { align-items: flex-start; }
+  .need-grid,
+  .transfer-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .modal-actions { justify-content: stretch; }
+  .modal-actions .btn,
+  .modal-actions .btn-ghost { flex: 1; }
 }

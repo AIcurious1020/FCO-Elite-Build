@@ -11,6 +11,7 @@ import {
 } from './finance.js';
 import {
   generateMarket, evaluateBid, completeTransferIn, sellPlayer,
+  squadNeeds, transferFit, projectedWageRatio,
 } from './transfers.js';
 import {
   clubsInDivision, divisionStandings, autoSimulateDivision,
@@ -35,6 +36,7 @@ const state = {
   currentWeek: 0,   // index into fixtures
   season: 1,
   market: [],
+  transferFilters: { position: 'ALL', affordableOnly: false },
   currentTab: 'dashboard',
   lastResults: [],
   // Board & manager objectives
@@ -109,6 +111,7 @@ function save() {
       clubs: state.league.clubs.map(serialiseClub),
       fixtures: state.fixtures,
       market: state.market.map(serialisePlayer),
+      transferFilters: state.transferFilters,
       lastResults: state.lastResults.map(r => ({
         home: r.home.id, away: r.away.id,
         homeGoals: r.homeGoals, awayGoals: r.awayGoals,
@@ -140,6 +143,7 @@ function load() {
     state.currentWeek = data.currentWeek;
     state.season = data.season;
     state.market = (data.market || []).map(p => Object.assign(new Player(p), p));
+    state.transferFilters = data.transferFilters ?? { position: 'ALL', affordableOnly: false };
     state.lastResults = (data.lastResults || []).map(r => ({
       home: clubsById[r.home], away: clubsById[r.away],
       homeGoals: r.homeGoals, awayGoals: r.awayGoals,
@@ -219,6 +223,9 @@ function setupGlobalButtons() {
   });
   document.getElementById('closeMatchModal').addEventListener('click', () => {
     document.getElementById('matchModal').hidden = true;
+  });
+  document.getElementById('transferModal').addEventListener('click', e => {
+    if (e.target.id === 'transferModal') closeTransferModal();
   });
 }
 
@@ -728,16 +735,40 @@ function renderTable() {
 /* ---------- Transfers ---------- */
 function renderTransfers() {
   const club = userClub();
-  const rows = state.market.map(p => `
+  const positionFilter = state.transferFilters?.position || 'ALL';
+  const affordableOnly = !!state.transferFilters?.affordableOnly;
+  const needs = squadNeeds(club);
+  const filtered = state.market.filter(p => {
+    const fit = transferFit(p, club);
+    if (positionFilter !== 'ALL' && p.position !== positionFilter) return false;
+    if (affordableOnly && !fit.affordable) return false;
+    return true;
+  });
+
+  const needCards = needs.map(n => `
+    <div class="need-card ${n.priority}">
+      <span>${n.position}</span>
+      <strong>${n.count}/${n.desired}</strong>
+      <small>${n.label}${n.bestOverall ? ` · Best ${n.bestOverall}` : ''}</small>
+    </div>
+  `).join('');
+
+  const rows = filtered.map(p => {
+    const fit = transferFit(p, club);
+    const fitClass = fit.affordable ? (fit.improvement >= 5 || fit.need.priority === 'urgent' ? 'success' : 'warning') : 'danger';
+    return `
     <tr>
       <td>${p.name}</td>
       <td><span class="pill ${p.position.toLowerCase()}">${p.position}</span></td>
       <td class="num">${p.age}</td>
       <td class="num"><strong>${p.overall}</strong></td>
+      <td class="num ${fit.improvement >= 0 ? 'success' : 'muted'}">${signed(fit.improvement)}</td>
       <td class="num">£${fmt(p.wage)}/wk</td>
-      <td class="num">£${fmt(p.value)}</td>
+      <td class="num">£${fmt(fit.askingPrice)}</td>
+      <td><span class="${fitClass} small">${fit.recommendation}</span></td>
       <td><button class="btn btn-sm" data-buy="${p.id}">Bid</button></td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   document.getElementById('transfers').innerHTML = `
     <div class="card">
@@ -745,16 +776,41 @@ function renderTransfers() {
         <h2 class="mb0">Transfer Market</h2>
         <span class="success"><strong>£${fmt(club.cash)}</strong> available</span>
       </div>
-      <p class="muted small mt">Bids are judged transparently: meet ~95% of a player's value and afford the fee, and it's accepted.</p>
+      <p class="muted small mt">Bids are judged transparently: meet ~95% of value and afford the fee. The market now shows squad fit, wage impact, and recommended targets.</p>
+      <div class="need-grid mt">${needCards}</div>
+      <div class="transfer-toolbar mt">
+        <label>
+          Position
+          <select id="transferPositionFilter">
+            ${transferFilterOption('ALL', 'All', positionFilter)}
+            ${transferFilterOption('GK', 'GK', positionFilter)}
+            ${transferFilterOption('DEF', 'DEF', positionFilter)}
+            ${transferFilterOption('MID', 'MID', positionFilter)}
+            ${transferFilterOption('FWD', 'FWD', positionFilter)}
+          </select>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="transferAffordableOnly" ${affordableOnly ? 'checked' : ''} />
+          Affordable only
+        </label>
+        <button class="btn-ghost" id="refreshMarket">Scout new targets</button>
+      </div>
       <table>
-        <thead><tr><th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th><th class="num">Wage</th><th class="num">Value</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
+        <thead><tr><th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th><th class="num">Vs Best</th><th class="num">Wage</th><th class="num">Ask</th><th>Fit</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="9" class="muted">No targets match these filters.</td></tr>'}</tbody>
       </table>
-      <button class="btn-ghost mt" id="refreshMarket">↻ Scout new targets</button>
     </div>`;
 
   document.querySelectorAll('[data-buy]').forEach(btn => {
     btn.addEventListener('click', () => openBid(btn.dataset.buy));
+  });
+  document.getElementById('transferPositionFilter').addEventListener('change', e => {
+    state.transferFilters = { ...(state.transferFilters || {}), position: e.target.value };
+    render();
+  });
+  document.getElementById('transferAffordableOnly').addEventListener('change', e => {
+    state.transferFilters = { ...(state.transferFilters || {}), affordableOnly: e.target.checked };
+    render();
   });
   document.getElementById('refreshMarket').addEventListener('click', () => {
     state.market = generateMarket(club); render();
@@ -765,19 +821,68 @@ function openBid(id) {
   const club = userClub();
   const target = state.market.find(p => p.id === id);
   if (!target) return;
-  const suggested = Math.round(target.value * 0.95);
-  const input = prompt(`Bid for ${target.name} (OVR ${target.overall}).\nAsking ~£${fmt(suggested)}. Your balance: £${fmt(club.cash)}.\n\nEnter your fee (£):`, suggested);
-  if (input == null) return;
-  const fee = parseInt(input.replace(/[^0-9]/g, ''), 10);
+  const fit = transferFit(target, club);
+  const wageRatio = projectedWageRatio(club, target);
+  document.getElementById('transferModalContent').innerHTML = `
+    <div class="flex-between">
+      <h2 class="mb0">${target.name}</h2>
+      <span class="pill ${target.position.toLowerCase()}">${target.position}</span>
+    </div>
+    <p class="muted small mt">${fit.recommendation} · ${target.age} years old · ${target.overall} OVR / ${target.potential} POT</p>
+    <div class="grid mt">
+      <div class="mini-panel"><span class="muted small">Asking price</span><strong>£${fmt(fit.askingPrice)}</strong></div>
+      <div class="mini-panel"><span class="muted small">Balance after ask</span><strong class="${club.cash - fit.askingPrice >= 0 ? 'success' : 'danger'}">£${fmt(club.cash - fit.askingPrice)}</strong></div>
+      <div class="mini-panel"><span class="muted small">Wage ratio after</span><strong class="${wageRatio < 0.8 ? 'success' : wageRatio < 1 ? 'warning' : 'danger'}">${(wageRatio * 100).toFixed(0)}%</strong></div>
+    </div>
+    <div class="transfer-detail-grid mt">
+      ${attributeMini('ATT', target.attack)}
+      ${attributeMini('DEF', target.defense)}
+      ${attributeMini('PAS', target.passing)}
+      ${attributeMini('FIN', target.finish)}
+    </div>
+    <div class="form-row mt">
+      <label>Bid fee</label>
+      <input type="number" id="bidFee" min="1" step="1000" value="${fit.askingPrice}" />
+    </div>
+    <p class="muted small">Rule: meet the asking price and have enough cash, and the deal is accepted. No hidden negotiation roll.</p>
+    <div class="modal-actions">
+      <button class="btn" id="confirmBid">Submit bid</button>
+      <button class="btn-ghost" id="cancelBid">Cancel</button>
+    </div>`;
+  document.getElementById('transferModal').hidden = false;
+  document.getElementById('cancelBid').addEventListener('click', closeTransferModal);
+  document.getElementById('confirmBid').addEventListener('click', () => submitBid(target.id));
+}
+
+function submitBid(id) {
+  const club = userClub();
+  const target = state.market.find(p => p.id === id);
+  if (!target) return;
+  const fee = parseInt(document.getElementById('bidFee').value, 10);
   if (!fee || fee <= 0) { alert('Enter a valid fee.'); return; }
   const verdict = evaluateBid(target, fee, club);
   if (verdict.accepted) {
     completeTransferIn(target, fee, club, state.market);
+    addInbox('Transfer completed', `${target.name} joins for £${fmt(fee)}. Wage ratio now ${(projectedWageRatio(club) * 100).toFixed(0)}%.`, 'transfer');
+    closeTransferModal();
     alert(`${verdict.reason}\n${target.name} joins ${club.name}!`);
   } else {
     alert(verdict.reason);
   }
   render();
+}
+
+function closeTransferModal() {
+  document.getElementById('transferModal').hidden = true;
+  document.getElementById('transferModalContent').innerHTML = '';
+}
+
+function transferFilterOption(value, label, selected) {
+  return `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`;
+}
+
+function attributeMini(label, value) {
+  return `<div class="mini-panel"><span class="muted small">${label}</span><strong>${value}</strong></div>`;
 }
 
 /* ---------- Finance ---------- */
