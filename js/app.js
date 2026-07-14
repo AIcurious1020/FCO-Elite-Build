@@ -31,8 +31,11 @@ import {
 } from './history.js';
 import {
   matchStory, divisionStory, transferMarketStory, transferCompletedStory,
-  infrastructureStory, seasonReviewStories, objectiveStory,
+  infrastructureStory, seasonReviewStories, objectiveStory, injuryStory,
 } from './news.js';
+import {
+  processWeeklyInjuries, injuredPlayers, availabilityByPosition, missingStarters,
+} from './injuries.js';
 
 // v3 save schema (multi-division + board objectives). Older saves are
 // incompatible, so they are simply ignored and a fresh pyramid game starts.
@@ -561,6 +564,7 @@ function renderMatchPreview(preview) {
   const oppProb = pct(preview.oppWin);
   const userXg = preview.isHome ? preview.probs.xg.home : preview.probs.xg.away;
   const oppXg = preview.isHome ? preview.probs.xg.away : preview.probs.xg.home;
+  const missing = missingStarters(userClub());
 
   return `
     <p class="fixture-line"><strong>${preview.home.name}</strong> vs <strong>${preview.away.name}</strong>
@@ -582,6 +586,7 @@ function renderMatchPreview(preview) {
     </div>
     <ul class="factor-list">
       ${preview.factors.map(f => `<li>${f}</li>`).join('')}
+      ${missing.length ? `<li class="danger">Unavailable: ${missing.map(p => `${p.name} (${p.injuryWeeks}w)`).join(', ')}.</li>` : ''}
     </ul>`;
 }
 
@@ -610,12 +615,15 @@ function renderLastResults() {
 /* ---------- Squad ---------- */
 function renderSquad() {
   const club = userClub();
+  const availability = availabilityByPosition(club);
+  const injuries = injuredPlayers(club);
   const players = club.players.slice().sort((a, b) =>
+    (a.available === false) - (b.available === false) ||
     posOrder(a.position) - posOrder(b.position) || b.overall - a.overall);
   const xi = new Set(club.bestEleven().map(p => p.id));
 
   const rows = players.map(p => `
-    <tr class="${xi.has(p.id) ? 'highlight-row' : ''}">
+    <tr class="${xi.has(p.id) ? 'highlight-row' : ''} ${p.available === false ? 'unavailable-row' : ''}">
       <td>${p.name} ${xi.has(p.id) ? '<span class="small success">●</span>' : ''}</td>
       <td><span class="pill ${p.position.toLowerCase()}">${p.position}</span></td>
       <td class="num">${p.age}</td>
@@ -625,6 +633,7 @@ function renderSquad() {
       <td class="num">${p.passing}</td>
       <td class="num">${p.finish}</td>
       <td class="num small">${p.form.toFixed(2)}</td>
+      <td class="${p.available === false ? 'danger' : 'success'} small">${p.available === false ? `${p.injury} · ${p.injuryWeeks}w` : 'Available'}</td>
       <td class="num">£${fmt(p.wage)}</td>
       <td class="num">£${fmt(p.value)}</td>
       <td><button class="btn-ghost btn-sm" data-sell="${p.id}">Sell</button></td>
@@ -634,13 +643,26 @@ function renderSquad() {
   document.getElementById('squad').innerHTML = `
     ${renderSquadDevelopmentReport()}
     <div class="card">
+      <div class="flex-between">
+        <h2 class="mb0">Availability</h2>
+        <span class="${injuries.length ? 'danger' : 'success'} small">${injuries.length ? `${injuries.length} unavailable` : 'Full squad available'}</span>
+      </div>
+      <div class="need-grid mt">
+        ${availability.map(a => `<div class="need-card ${a.available < Math.min(a.total, { GK: 1, DEF: 3, MID: 3, FWD: 1 }[a.position]) ? 'urgent' : 'covered'}">
+          <span>${a.position}</span>
+          <strong>${a.available}/${a.total}</strong>
+          <small>Available</small>
+        </div>`).join('')}
+      </div>
+    </div>
+    <div class="card">
       <h2>Squad · ${players.length} players <span class="muted small">(● = starting XI)</span></h2>
       <div style="overflow-x:auto">
       <table>
         <thead><tr>
           <th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th>
           <th class="num">Att</th><th class="num">Def</th><th class="num">Pas</th><th class="num">Fin</th>
-          <th class="num">Form</th><th class="num">Wage</th><th class="num">Value</th><th></th>
+          <th class="num">Form</th><th>Status</th><th class="num">Wage</th><th class="num">Value</th><th></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -1186,6 +1208,7 @@ function onPlayNext() {
   }
 
   updateFormAndMorale(results);
+  processWeeklyInjuries(results).forEach(event => addStory(injuryStory(event, uc)));
   render();
 }
 
@@ -1471,6 +1494,8 @@ function storyCategory(type) {
     development: 'Development',
     history: 'Club',
     league: 'League',
+    injury: 'Squad',
+    fitness: 'Squad',
     'result-good': 'Match',
     'result-neutral': 'Match',
     'result-bad': 'Match',

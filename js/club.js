@@ -45,7 +45,9 @@ export class Club {
   // guaranteeing at least 3 DEF / 3 MID / 1 FWD when available.
   bestEleven() {
     const byPos = { GK: [], DEF: [], MID: [], FWD: [] };
-    for (const p of this.players) byPos[p.position]?.push(p);
+    const pool = this.players.filter(p => p.available !== false);
+    const selectionPool = pool.length >= 11 ? pool : this.players;
+    for (const p of selectionPool) byPos[p.position]?.push(p);
     for (const k in byPos) byPos[k].sort((a, b) => b.overall - a.overall);
 
     const xi = [];

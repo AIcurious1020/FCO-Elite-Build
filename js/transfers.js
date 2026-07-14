@@ -66,6 +66,7 @@ export function squadNeeds(club) {
   const best = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
 
   club.players.forEach(p => {
+    if (p.available === false) return;
     if (!counts[p.position]) counts[p.position] = 0;
     counts[p.position]++;
     best[p.position] = Math.max(best[p.position] || 0, p.overall);

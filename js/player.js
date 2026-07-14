@@ -6,7 +6,8 @@ export class Player {
   constructor({
     id, name, position, age,
     attack, defense, passing, finish,
-    wage, value, form = 1.0, morale = 1.0, potential = null
+    wage, value, form = 1.0, morale = 1.0, potential = null,
+    injuryWeeks = 0, injury = null
   }) {
     this.id = id;
     this.name = name;
@@ -21,8 +22,14 @@ export class Player {
     this.form = form;               // 0.85–1.15
     this.morale = morale;           // 0.85–1.15
     this.potential = potential ?? Math.min(99, Player.overallOf({ attack, defense, passing, finish, position }) + 6);
+    this.injuryWeeks = injuryWeeks;
+    this.injury = injury;
     this.appearances = 0;
     this.goals = 0;
+  }
+
+  get available() {
+    return !this.injuryWeeks || this.injuryWeeks <= 0;
   }
 
   // Position-weighted overall rating (0–99) — the single number shown in the UI.

@@ -141,6 +141,8 @@ tr.zone-releg td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
 .dot-releg { background: var(--danger); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tbody tr:hover td { background: rgba(255,255,255,.03); }
+tr.unavailable-row td { opacity: .7; }
+tr.unavailable-row td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
 
 /* ---------- Buttons ---------- */
 .btn {
@@ -221,6 +223,8 @@ tbody tr:hover td { background: rgba(255,255,255,.03); }
 .inbox-dot.history { background: var(--warning); }
 .inbox-dot.development { background: var(--accent-2); }
 .inbox-dot.league { background: var(--gold); }
+.inbox-dot.injury { background: var(--danger); }
+.inbox-dot.fitness { background: var(--accent-2); }
 .inbox-dot.result-good { background: var(--accent-2); }
 .inbox-dot.result-neutral { background: var(--warning); }
 .inbox-dot.result-bad { background: var(--danger); }

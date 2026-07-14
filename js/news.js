@@ -108,8 +108,32 @@ export function objectiveStory(objective) {
   };
 }
 
+export function injuryStory(event, userClub) {
+  const isUser = event.club === userClub;
+  if (event.kind === 'return') {
+    return {
+      title: `${event.player.name} returns to training`,
+      body: `${event.player.name} has recovered from ${event.injury || 'injury'} and is available again for ${event.club.name}.`,
+      type: 'fitness',
+      category: isUser ? 'Squad' : 'League',
+      importance: isUser ? 2 : 1,
+    };
+  }
+  return {
+    title: `${event.player.name} ruled out for ${event.weeks} week${event.weeks === 1 ? '' : 's'}`,
+    body: `${event.club.name} will be without ${event.player.name} after ${article(event.injury)} ${event.injury}. Squad depth at ${event.player.position} is now under the spotlight.`,
+    type: isUser ? 'injury' : 'league',
+    category: isUser ? 'Squad' : 'League',
+    importance: isUser ? 3 : 1,
+  };
+}
+
 function fmt(n) {
   return Math.round(n).toLocaleString('en-GB');
+}
+
+function article(text = '') {
+  return /^[aeiou]/i.test(text) ? 'an' : 'a';
 }
 
 function ordinal(n) {
