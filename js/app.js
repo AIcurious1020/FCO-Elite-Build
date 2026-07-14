@@ -32,7 +32,7 @@ import {
 import {
   matchStory, divisionStory, transferMarketStory, transferCompletedStory,
   infrastructureStory, seasonReviewStories, objectiveStory, injuryStory,
-  cupStory, cupRoundStory,
+  cupStory, cupRoundStory, cupDrawStory,
 } from './news.js';
 import {
   processWeeklyInjuries, injuredPlayers, availabilityByPosition, missingStarters,
@@ -70,6 +70,7 @@ const state = {
   lastCupResults: [],
   seasonCalendar: [],
   currentEvent: 0,
+  resultMemory: [],
 };
 
 /* ------------------------------------------------------------------ */
@@ -106,6 +107,7 @@ function newGame() {
   state.lastCupResults = [];
   state.seasonCalendar = buildSeasonCalendar(state.fixtures, state.cup, state.season);
   state.currentEvent = 0;
+  state.resultMemory = [];
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
@@ -166,6 +168,10 @@ function syncSeasonCalendar() {
     } else if (event.type === 'cup') {
       event.played = !!state.cup?.rounds?.[event.roundIndex]?.played;
     }
+    if (event.played && !event.result) {
+      const memory = state.resultMemory.find(r => r.date === event.date && r.round === event.label);
+      if (memory) event.result = calendarResultSummary(memory);
+    }
   });
 }
 
@@ -178,6 +184,63 @@ function nextCalendarIndex() {
 function nextCalendarEvent() {
   state.currentEvent = nextCalendarIndex();
   return state.seasonCalendar[state.currentEvent] || null;
+}
+
+function rememberResult(event, result, context = {}) {
+  const uc = userClub();
+  const isHome = result.home === uc;
+  const involved = result.home === uc || result.away === uc;
+  const userGoals = isHome ? result.homeGoals : result.awayGoals;
+  const oppGoals = isHome ? result.awayGoals : result.homeGoals;
+  const opponent = isHome ? result.away : result.home;
+  const won = context.cup ? result.winner === uc : userGoals > oppGoals;
+  const drew = !context.cup && userGoals === oppGoals;
+  const memory = {
+    id: `${event.id}-${Date.now()}`,
+    season: state.season,
+    date: event.date,
+    type: event.type,
+    competition: context.competition || (event.type === 'cup' ? state.cup.name : 'League'),
+    round: context.roundName || event.label,
+    home: result.home.id,
+    away: result.away.id,
+    homeGoals: result.homeGoals,
+    awayGoals: result.awayGoals,
+    winner: result.winner?.id || null,
+    opponent: involved ? opponent.id : null,
+    involved,
+    outcome: involved ? won ? 'W' : drew ? 'D' : 'L' : null,
+    xg: result.xg,
+    tiebreak: result.tiebreak || null,
+  };
+  state.resultMemory.unshift(memory);
+  state.resultMemory = state.resultMemory.slice(0, 60);
+  event.result = calendarResultSummary(memory);
+  event.played = true;
+  return memory;
+}
+
+function calendarResultSummary(memory) {
+  const home = state.league.clubsById[memory.home];
+  const away = state.league.clubsById[memory.away];
+  const score = `${home.short} ${memory.homeGoals}-${memory.awayGoals} ${away.short}`;
+  const pens = memory.tiebreak ? `, pens ${memory.tiebreak.penaltyScore}` : '';
+  return {
+    text: `${score}${pens}`,
+    outcome: memory.outcome,
+    involved: memory.involved,
+    winner: memory.winner,
+  };
+}
+
+function rememberRoundSummary(event, played) {
+  event.result = {
+    text: `${played.round.short}: ${played.results.length} ties played`,
+    outcome: null,
+    involved: false,
+    winner: played.championId || null,
+  };
+  event.played = true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -212,6 +275,7 @@ function save() {
       lastCupResults: state.lastCupResults.map(serialiseCupResult),
       seasonCalendar: state.seasonCalendar,
       currentEvent: state.currentEvent,
+      resultMemory: state.resultMemory,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -249,6 +313,7 @@ function load() {
     state.cup = data.cup ?? createCup(clubs, data.season || 1);
     state.lastCupResults = (data.lastCupResults || []).map(r => hydrateCupResult(r, clubsById));
     state.seasonCalendar = data.seasonCalendar ?? buildSeasonCalendar(state.fixtures, state.cup, state.season);
+    state.resultMemory = data.resultMemory ?? [];
     syncSeasonCalendar();
     state.currentEvent = nextCalendarIndex();
     // Safety: if an objective is missing (older-but-compatible save), set one.
@@ -475,6 +540,8 @@ function renderDashboard() {
 
     ${renderDevelopmentSummary()}
 
+    ${renderSeasonTimeline()}
+
     ${renderLastResults()}
   `;
 
@@ -491,6 +558,8 @@ function renderDashboard() {
   }
   const openNews = document.getElementById('openNews');
   if (openNews) openNews.addEventListener('click', () => switchTab('news'));
+  const openTimelineCalendar = document.getElementById('openTimelineCalendar');
+  if (openTimelineCalendar) openTimelineCalendar.addEventListener('click', () => switchTab('fixtures'));
 }
 
 function renderDevelopmentSummary() {
@@ -510,6 +579,27 @@ function renderDevelopmentSummary() {
     </div>
     <p class="muted small mt">${summary.text}</p>
     ${prospect ? `<p class="small gold">Top prospect: ${prospect.name} · ${prospect.position} · ${prospect.overall} OVR / ${prospect.potential} POT</p>` : ''}
+  </div>`;
+}
+
+function renderSeasonTimeline() {
+  if (!state.resultMemory.length) return '';
+  const items = state.resultMemory.slice(0, 5).map(memory => {
+    const home = state.league.clubsById[memory.home];
+    const away = state.league.clubsById[memory.away];
+    const result = calendarResultSummary(memory);
+    return `<li>
+      <strong>${memory.date}</strong> · ${memory.competition} · ${memory.round}
+      <span class="${memory.outcome === 'W' ? 'success' : memory.outcome === 'L' ? 'danger' : 'warning'}">${result.text}</span>
+      <span class="muted small">${memory.involved ? `vs ${memory.opponent ? state.league.clubsById[memory.opponent].short : ''}` : `${home.short}/${away.short}`}</span>
+    </li>`;
+  }).join('');
+  return `<div class="card">
+    <div class="flex-between">
+      <h2 class="mb0">Season Timeline</h2>
+      <button class="btn-ghost btn-sm" id="openTimelineCalendar">Open calendar</button>
+    </div>
+    <ul class="plain-list mt">${items}</ul>
   </div>`;
 }
 
@@ -649,16 +739,56 @@ function matchPreview(fx, event = null) {
   const oppRatings = isHome ? awayRatings : homeRatings;
   const opponent = isHome ? away : home;
   const factors = previewFactors(club, opponent, userRatings, oppRatings, isHome);
+  const context = fixtureContext({ club, opponent, event, competition: fx.competition || 'League' });
 
   return {
     home, away, opponent, isHome,
     competition: fx.competition || 'League',
     date: event?.date || fx.event?.date || '',
     roundName: fx.roundName || event?.label || '',
+    context,
     ratings: { home: homeRatings, away: awayRatings, user: userRatings, opponent: oppRatings },
     probs, userWin, oppWin, userEdge: userWin - oppWin,
     factors,
   };
+}
+
+function fixtureContext({ club, opponent, event, competition }) {
+  const table = divisionStandings(state.league.clubs, club.division);
+  const oppPos = opponent.division === club.division ? table.indexOf(opponent) + 1 : null;
+  const userPos = table.indexOf(club) + 1;
+  const recent = recentForm(opponent.id);
+  const stakes = [];
+  if (event?.type === 'cup') stakes.push('Knockout tie: winner advances, loser exits.');
+  if (competition === 'League') {
+    const track = trackStatus(state.objective, userPos, club.played);
+    stakes.push(`Board objective: ${trackWord(track.state)}.`);
+    if (userPos <= 2) stakes.push('Promotion race fixture.');
+    if (userPos >= table.length - 1) stakes.push('Relegation pressure fixture.');
+  }
+  if (missingStarters(opponent).length) stakes.push(`${opponent.short} have selection issues.`);
+
+  return {
+    opponentPosition: oppPos,
+    opponentForm: recent.label,
+    stakes,
+  };
+}
+
+function recentForm(clubId, limit = 5) {
+  const club = state.league.clubsById[clubId];
+  const chars = state.resultMemory
+    .filter(m => m.involved && (m.home === clubId || m.away === clubId || m.opponent === clubId))
+    .slice(0, limit)
+    .map(m => {
+      const clubHome = m.home === clubId;
+      const clubGoals = clubHome ? m.homeGoals : m.awayGoals;
+      const oppGoals = clubHome ? m.awayGoals : m.homeGoals;
+      if (m.type === 'cup' && m.winner) return m.winner === clubId ? 'W' : 'L';
+      return clubGoals > oppGoals ? 'W' : clubGoals === oppGoals ? 'D' : 'L';
+    });
+  if (chars.length) return { label: chars.join(' ') };
+  return { label: club?.played ? `${club.won}-${club.drawn}-${club.lost}` : 'season not started' };
 }
 
 function previewFactors(club, opponent, userRatings, oppRatings, isHome) {
@@ -710,6 +840,9 @@ function renderMatchPreview(preview) {
     </div>
     <ul class="factor-list">
       ${preview.factors.map(f => `<li>${f}</li>`).join('')}
+      ${preview.context.opponentPosition ? `<li>${preview.opponent.short} are ${preview.context.opponentPosition}${ord(preview.context.opponentPosition)} in your division.</li>` : ''}
+      <li>${preview.opponent.short} recent form: ${preview.context.opponentForm}.</li>
+      ${preview.context.stakes.map(s => `<li>${s}</li>`).join('')}
       ${missing.length ? `<li class="danger">Unavailable: ${missing.map(p => `${p.name} (${p.injuryWeeks}w)`).join(', ')}.</li>` : ''}
     </ul>`;
 }
@@ -719,11 +852,13 @@ function renderCalendarMini() {
   if (!items.length) return '<p class="muted small mt">All scheduled fixtures complete.</p>';
   return `<table class="mt"><tbody>${items.map((event, i) => {
     const fixture = fixtureForCalendarEvent(event);
+    const detail = event.result?.text || (fixture ? `${state.league.clubsById[fixture.home].short} vs ${state.league.clubsById[fixture.away].short}` : event.label);
+    const status = event.played ? resultLabel(event.result) : i === 0 ? 'Next' : 'Scheduled';
     return `<tr class="${i === 0 ? 'highlight-row' : ''}">
       <td>${event.date}</td>
       <td>${event.type === 'cup' ? 'Cup' : 'League'}</td>
-      <td>${fixture ? `${state.league.clubsById[fixture.home].short} vs ${state.league.clubsById[fixture.away].short}` : event.label}</td>
-      <td class="center">${i === 0 ? 'Next' : 'Scheduled'}</td>
+      <td>${detail}</td>
+      <td class="center">${status}</td>
     </tr>`;
   }).join('')}</tbody></table>`;
 }
@@ -736,6 +871,25 @@ function renderCalendarEventPreview(event) {
       <p class="muted small">Your club is not scheduled in this cup round. Playing the next fixture will still simulate the round and update the draw, news, injuries, and cup story.</p>`;
   }
   return '<p class="muted">No fixture found for this calendar date.</p>';
+}
+
+function calendarFixtureContext(fx, event) {
+  const preview = matchPreview(fx, event);
+  const pos = preview.context.opponentPosition ? `${preview.opponent.short}: ${preview.context.opponentPosition}${ord(preview.context.opponentPosition)}` : preview.opponent.short;
+  const stake = preview.context.stakes[0] || 'Scheduled fixture';
+  return `<span class="small muted">${pos} · Form ${preview.context.opponentForm} · ${stake}</span>`;
+}
+
+function resultContext(result) {
+  if (!result) return '';
+  if (!result.involved) return '<span class="small muted">Round simulated</span>';
+  return `<span class="small muted">Your result · xG stored</span>`;
+}
+
+function resultLabel(result) {
+  if (!result) return 'Done';
+  if (!result.involved || !result.outcome) return 'Done';
+  return result.outcome;
 }
 
 function probCell(label, value, tone) {
@@ -941,15 +1095,17 @@ function renderFixtures() {
     const home = fx ? state.league.clubsById[fx.home] : null;
     const away = fx ? state.league.clubsById[fx.away] : null;
     const status = event.played ? 'played' : (i === state.currentEvent ? 'next' : 'scheduled');
-    const detail = fx
+    const detail = event.result?.text || (fx
       ? `${home.name} vs ${away.name}`
-      : event.type === 'cup' ? `${event.label} draw to be confirmed` : event.label;
+      : event.type === 'cup' ? `${event.label} draw to be confirmed` : event.label);
+    const context = !event.played && fx ? calendarFixtureContext(fx, event) : event.result ? resultContext(event.result) : '';
     return `<tr class="${status === 'next' ? 'highlight-row' : ''}">
       <td>${event.date}</td>
       <td>${event.type === 'cup' ? state.cup.name : 'League'}</td>
       <td>${event.label}</td>
       <td>${detail}</td>
-      <td class="center">${event.played ? 'Done' : (status === 'next' ? 'Next' : 'Scheduled')}</td>
+      <td>${context}</td>
+      <td class="center">${event.played ? resultLabel(event.result) : (status === 'next' ? 'Next' : 'Scheduled')}</td>
     </tr>`;
   }).join('');
 
@@ -958,7 +1114,7 @@ function renderFixtures() {
       <h2>Game Day Calendar · Season ${state.season}</h2>
       <p class="muted small mt">League matchweeks and cup rounds are pre-scheduled here. Cup draws populate as each previous round is completed.</p>
       <table>
-        <thead><tr><th>Date</th><th>Competition</th><th>Round</th><th>Fixture</th><th class="center">Status</th></tr></thead>
+        <thead><tr><th>Date</th><th>Competition</th><th>Round</th><th>Fixture / Result</th><th>Context</th><th class="center">Status</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -1455,8 +1611,11 @@ function playLeagueEvent(event) {
   const mine = results.find(r => r.home === uc || r.away === uc);
   if (mine) {
     const afterPos = divisionStandings(state.league.clubs, uc.division).indexOf(uc) + 1;
+    rememberResult(event, mine, { competition: 'League', roundName: event.label });
     addMatchInbox(mine, beforePos, afterPos);
     showMatchModal(mine, { competition: 'League', roundName: event.label, date: event.date });
+  } else {
+    rememberRoundSummary(event, { round: { short: event.label }, results });
   }
 
   updateFormAndMorale(results);
@@ -1480,6 +1639,7 @@ function playCupEvent(event) {
     const prize = won ? played.round.prize : 0;
     if (prize) uc.cash += prize;
     state.cup.userBestRound = played.round.name;
+    rememberResult(event, mine, { competition: state.cup.name, roundName: played.round.name, cup: true });
     addStory(cupStory({ result: mine, round: played.round, userClub: uc, prize }));
     showMatchModal(mine, {
       competition: state.cup.name,
@@ -1495,7 +1655,7 @@ function playCupEvent(event) {
         { season: state.season, label: `Won ${state.cup.name}` },
       ];
     }
-  }
+  } else rememberRoundSummary(event, played);
 
   addStory(cupRoundStory({
     round: played.round,
@@ -1503,6 +1663,8 @@ function playCupEvent(event) {
     clubsById: state.league.clubsById,
     championId: played.championId,
   }));
+  const draw = cupDrawStory({ cup: state.cup, clubsById: state.league.clubsById, userClub: uc });
+  if (draw) addStory(draw);
 }
 
 function onPlayCupRound() {
@@ -1701,6 +1863,7 @@ function onNewSeason() {
   state.lastCupResults = [];
   state.seasonCalendar = buildSeasonCalendar(state.fixtures, state.cup, state.season);
   state.currentEvent = 0;
+  state.resultMemory = [];
 
   // 6a. The board sets a fresh objective for the new season & division.
   state.objective = setLeagueObjective(uc, state.lastMove, clubsInDivision(clubs, uc.division).length);

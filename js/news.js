@@ -179,6 +179,31 @@ export function cupRoundStory({ round, results, clubsById, championId }) {
   };
 }
 
+export function cupDrawStory({ cup, clubsById, userClub }) {
+  const round = cup?.rounds?.[cup.roundIndex];
+  if (!round || cup.status === 'complete') return null;
+  const userTie = round.fixtures.find(f => f.home === userClub.id || f.away === userClub.id);
+  if (userTie) {
+    const home = clubsById[userTie.home];
+    const away = clubsById[userTie.away];
+    const opponent = home === userClub ? away : home;
+    return {
+      title: `${userClub.short} drawn ${home === userClub ? 'at home to' : 'away at'} ${opponent.short}`,
+      body: `${userClub.name} will face ${opponent.name} in the ${round.name}. The tie is now listed on the season calendar.`,
+      type: 'cup',
+      category: 'Cup',
+      importance: 2,
+    };
+  }
+  return {
+    title: `${round.name} draw confirmed`,
+    body: `${round.fixtures.length} cup ties have been scheduled. ${userClub.name} are not involved in this round.`,
+    type: 'cup',
+    category: 'Cup',
+    importance: 1,
+  };
+}
+
 function fmt(n) {
   return Math.round(n).toLocaleString('en-GB');
 }
