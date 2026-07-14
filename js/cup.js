@@ -95,6 +95,12 @@ export function playCupRound(cup, clubsById, seedBase = null) {
   return { round, results, championId: cup.championId };
 }
 
+export function cupRoundFixture(cup, userClubId) {
+  const round = cupCurrentRound(cup);
+  if (!round) return null;
+  return round.fixtures.find(f => f.home === userClubId || f.away === userClubId) || null;
+}
+
 function playCupMatch(fixture, clubsById, seed = null) {
   const home = clubsById[fixture.home];
   const away = clubsById[fixture.away];

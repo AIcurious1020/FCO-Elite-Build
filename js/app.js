@@ -38,7 +38,7 @@ import {
   processWeeklyInjuries, injuredPlayers, availabilityByPosition, missingStarters,
 } from './injuries.js';
 import {
-  createCup, cupCurrentRound, cupCanPlay, cupStatus, playCupRound,
+  createCup, cupCurrentRound, cupStatus, playCupRound, cupRoundFixture,
 } from './cup.js';
 
 // v3 save schema (multi-division + board objectives). Older saves are
@@ -68,6 +68,8 @@ const state = {
   clubHistory: null,
   cup: null,
   lastCupResults: [],
+  seasonCalendar: [],
+  currentEvent: 0,
 };
 
 /* ------------------------------------------------------------------ */
@@ -102,6 +104,8 @@ function newGame() {
   state.clubHistory = createClubHistory(uc);
   state.cup = createCup(lg.clubs, state.season);
   state.lastCupResults = [];
+  state.seasonCalendar = buildSeasonCalendar(state.fixtures, state.cup, state.season);
+  state.currentEvent = 0;
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
@@ -121,6 +125,59 @@ function userDivision() {
 // Clubs in the user's current division (for tables, fixtures, dashboard).
 function myDivisionClubs() {
   return clubsInDivision(state.league.clubs, userDivision());
+}
+
+function buildSeasonCalendar(fixtures, cup, season) {
+  const events = [];
+  const seasonStart = new Date(Date.UTC(2026 + season - 1, 7, 3));
+  fixtures.forEach((week, i) => {
+    events.push({
+      id: `S${season}-L${week.week}`,
+      type: 'league',
+      label: `League Matchweek ${week.week}`,
+      week: week.week,
+      date: formatGameDate(addDays(seasonStart, i * 7 + 3)),
+      sort: i * 10 + 3,
+      played: !!week.played,
+    });
+  });
+  (cup?.rounds || []).forEach((round, i) => {
+    const slot = Math.max(0, round.unlockWeek - 1) * 10 + 1;
+    events.push({
+      id: `S${season}-C${i}`,
+      type: 'cup',
+      label: round.name,
+      roundIndex: i,
+      date: formatGameDate(addDays(seasonStart, Math.max(0, round.unlockWeek - 1) * 7 + 1)),
+      sort: slot,
+      played: !!round.played,
+    });
+  });
+  return events.sort((a, b) => a.sort - b.sort);
+}
+
+function syncSeasonCalendar() {
+  if (!state.seasonCalendar?.length) {
+    state.seasonCalendar = buildSeasonCalendar(state.fixtures, state.cup, state.season);
+  }
+  state.seasonCalendar.forEach(event => {
+    if (event.type === 'league') {
+      event.played = !!state.fixtures.find(w => w.week === event.week)?.played;
+    } else if (event.type === 'cup') {
+      event.played = !!state.cup?.rounds?.[event.roundIndex]?.played;
+    }
+  });
+}
+
+function nextCalendarIndex() {
+  syncSeasonCalendar();
+  const idx = state.seasonCalendar.findIndex(e => !e.played);
+  return idx === -1 ? state.seasonCalendar.length : idx;
+}
+
+function nextCalendarEvent() {
+  state.currentEvent = nextCalendarIndex();
+  return state.seasonCalendar[state.currentEvent] || null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -153,6 +210,8 @@ function save() {
       clubHistory: state.clubHistory,
       cup: state.cup,
       lastCupResults: state.lastCupResults.map(serialiseCupResult),
+      seasonCalendar: state.seasonCalendar,
+      currentEvent: state.currentEvent,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -189,6 +248,9 @@ function load() {
     state.clubHistory = data.clubHistory ?? createClubHistory(clubsById[data.userClubId]);
     state.cup = data.cup ?? createCup(clubs, data.season || 1);
     state.lastCupResults = (data.lastCupResults || []).map(r => hydrateCupResult(r, clubsById));
+    state.seasonCalendar = data.seasonCalendar ?? buildSeasonCalendar(state.fixtures, state.cup, state.season);
+    syncSeasonCalendar();
+    state.currentEvent = nextCalendarIndex();
     // Safety: if an objective is missing (older-but-compatible save), set one.
     if (!state.objective) {
       const uc = clubsById[data.userClubId];
@@ -312,9 +374,8 @@ function renderDashboard() {
   const table = divisionStandings(state.league.clubs, club.division);
   const pos = table.indexOf(club) + 1;
   const divInfo = DIVISIONS[club.division];
-  const totalWeeks = state.fixtures.length;
-  const done = state.currentWeek;
-  const nextWeek = state.fixtures[state.currentWeek];
+  const totalEvents = state.seasonCalendar.length;
+  const nextEvent = nextCalendarEvent();
   const health = financialHealth(club);
 
   // Board objective + live on-track status.
@@ -322,19 +383,15 @@ function renderDashboard() {
   const track = trackStatus(obj, pos, club.played);
   const conf = confidenceLabel(state.confidence);
 
-  const nextFixture = nextWeek
-    ? nextWeek.matches.find(m => m.home === club.id || m.away === club.id)
-    : null;
-  const preview = nextFixture ? matchPreview(nextFixture) : null;
-  const cupRound = cupCurrentRound(state.cup);
-  const cupReady = cupCanPlay(state.cup, state.currentWeek);
+  const nextFixture = nextEvent ? fixtureForCalendarEvent(nextEvent) : null;
+  const preview = nextFixture ? matchPreview(nextFixture, nextEvent) : null;
 
   document.getElementById('dashboard').innerHTML = `
     <div class="card">
       <div class="flex-between">
         <div>
           <h2 class="mb0">${club.name}</h2>
-          <p class="muted small">${divInfo.name} · Season ${state.season} · Matchweek ${Math.min(done + 1, totalWeeks)} of ${totalWeeks}</p>
+          <p class="muted small">${divInfo.name} · Season ${state.season} · Event ${Math.min(state.currentEvent + 1, totalEvents)} of ${totalEvents}</p>
         </div>
         <div class="center">
           <div class="stat span" style="min-width:70px"><strong>Position</strong><span class="gold">${pos}${ord(pos)}</span></div>
@@ -379,21 +436,21 @@ function renderDashboard() {
         <h2 class="mb0">Next Match Preview</h2>
         ${preview ? `<span class="pill ${preview.userEdge >= 0 ? 'obj-ontrack' : 'obj-close'}">${preview.userEdge >= 0 ? 'Favourable' : 'Tough'}</span>` : ''}
       </div>
-      ${preview ? renderMatchPreview(preview) : '<p class="muted">Season complete — advance to start the next one.</p>'}
+      ${preview ? renderMatchPreview(preview) : renderCalendarEventPreview(nextEvent)}
       <div class="flex mt action-row">
-        <button class="btn btn-lg" id="playNext" ${!nextFixture ? 'disabled' : ''}>▶ Play Next Matchweek</button>
+        <button class="btn btn-lg" id="playNext" ${!nextEvent ? 'disabled' : ''}>▶ Play Next Fixture</button>
       </div>
-      ${!nextFixture ? `<button class="btn btn-success btn-lg mt" id="newSeason">Start Season ${state.season + 1}</button>` : ''}
+      ${!nextEvent ? `<button class="btn btn-success btn-lg mt" id="newSeason">Start Season ${state.season + 1}</button>` : ''}
     </div>
 
     <div class="card">
       <div class="flex-between">
-        <h2 class="mb0">Chairman Cup</h2>
+        <h2 class="mb0">Season Calendar</h2>
         <span class="pill obj-${cupStatus(state.cup, club.id).band}">${cupStatus(state.cup, club.id).label}</span>
       </div>
-      ${renderCupMini(cupRound, cupReady)}
+      ${renderCalendarMini()}
       <div class="flex mt action-row">
-        <button class="btn btn-sm" id="playCupRound" ${!cupReady ? 'disabled' : ''}>Play Cup Round</button>
+        <button class="btn-ghost btn-sm" id="openFixtures">Open calendar</button>
         <button class="btn-ghost btn-sm" id="openCup">Open cup</button>
       </div>
     </div>
@@ -423,8 +480,8 @@ function renderDashboard() {
 
   const playBtn = document.getElementById('playNext');
   if (playBtn) playBtn.addEventListener('click', onPlayNext);
-  const playCupBtn = document.getElementById('playCupRound');
-  if (playCupBtn) playCupBtn.addEventListener('click', onPlayCupRound);
+  const openFixtures = document.getElementById('openFixtures');
+  if (openFixtures) openFixtures.addEventListener('click', () => switchTab('fixtures'));
   const openCup = document.getElementById('openCup');
   if (openCup) openCup.addEventListener('click', () => switchTab('cup'));
   const ns = document.getElementById('newSeason');
@@ -564,7 +621,21 @@ function renderNewsList(items, compact) {
   }).join('')}</div>`;
 }
 
-function matchPreview(fx) {
+function fixtureForCalendarEvent(event) {
+  if (!event) return null;
+  const club = userClub();
+  if (event.type === 'league') {
+    const week = state.fixtures.find(w => w.week === event.week);
+    const fixture = week?.matches.find(m => m.home === club.id || m.away === club.id);
+    return fixture ? { ...fixture, competition: 'League', event, roundName: event.label } : null;
+  }
+  if (event.roundIndex !== state.cup?.roundIndex) return null;
+  const fixture = cupRoundFixture(state.cup, club.id);
+  const round = cupCurrentRound(state.cup);
+  return fixture ? { ...fixture, competition: state.cup.name, event, roundName: round?.name || event.label } : null;
+}
+
+function matchPreview(fx, event = null) {
   const club = userClub();
   const home = state.league.clubsById[fx.home];
   const away = state.league.clubsById[fx.away];
@@ -581,6 +652,9 @@ function matchPreview(fx) {
 
   return {
     home, away, opponent, isHome,
+    competition: fx.competition || 'League',
+    date: event?.date || fx.event?.date || '',
+    roundName: fx.roundName || event?.label || '',
     ratings: { home: homeRatings, away: awayRatings, user: userRatings, opponent: oppRatings },
     probs, userWin, oppWin, userEdge: userWin - oppWin,
     factors,
@@ -616,6 +690,7 @@ function renderMatchPreview(preview) {
   const missing = missingStarters(userClub());
 
   return `
+    <p class="muted small">${preview.date ? `${preview.date} · ` : ''}${preview.competition}${preview.roundName ? ` · ${preview.roundName}` : ''}</p>
     <p class="fixture-line"><strong>${preview.home.name}</strong> vs <strong>${preview.away.name}</strong>
       <span class="muted small">(${preview.isHome ? 'Home' : 'Away'} for you)</span></p>
     <div class="prob-grid mt">
@@ -639,19 +714,28 @@ function renderMatchPreview(preview) {
     </ul>`;
 }
 
-function renderCupMini(round, ready) {
-  if (!state.cup) return '<p class="muted small mt">Cup draw pending.</p>';
-  const status = cupStatus(state.cup, userClub().id);
-  if (!round) return `<p class="muted small mt">${status.text}</p>`;
-  const userTie = round.fixtures.find(f => f.home === userClub().id || f.away === userClub().id);
-  const line = userTie
-    ? `${state.league.clubsById[userTie.home].short} vs ${state.league.clubsById[userTie.away].short}`
-    : status.text;
-  return `
-    <p class="muted small mt">${round.name} unlocks at matchweek ${round.unlockWeek}. Winner prize this round: £${fmt(round.prize)}.</p>
-    <p><strong>${line}</strong></p>
-    <p class="small ${ready ? 'success' : 'muted'}">${ready ? 'Round ready to play.' : `Reach matchweek ${round.unlockWeek} to play this round.`}</p>
-    ${state.cup.status === 'active' && !state.fixtures[state.currentWeek] ? '<p class="small warning">Complete the active cup before starting next season.</p>' : ''}`;
+function renderCalendarMini() {
+  const items = state.seasonCalendar.slice(state.currentEvent, state.currentEvent + 5);
+  if (!items.length) return '<p class="muted small mt">All scheduled fixtures complete.</p>';
+  return `<table class="mt"><tbody>${items.map((event, i) => {
+    const fixture = fixtureForCalendarEvent(event);
+    return `<tr class="${i === 0 ? 'highlight-row' : ''}">
+      <td>${event.date}</td>
+      <td>${event.type === 'cup' ? 'Cup' : 'League'}</td>
+      <td>${fixture ? `${state.league.clubsById[fixture.home].short} vs ${state.league.clubsById[fixture.away].short}` : event.label}</td>
+      <td class="center">${i === 0 ? 'Next' : 'Scheduled'}</td>
+    </tr>`;
+  }).join('')}</tbody></table>`;
+}
+
+function renderCalendarEventPreview(event) {
+  if (!event) return '<p class="muted">Season complete — advance to start the next one.</p>';
+  if (event.type === 'cup') {
+    return `<p class="muted small mt">${event.date} · ${state.cup.name}</p>
+      <p><strong>${event.label}</strong></p>
+      <p class="muted small">Your club is not scheduled in this cup round. Playing the next fixture will still simulate the round and update the draw, news, injuries, and cup story.</p>`;
+  }
+  return '<p class="muted">No fixture found for this calendar date.</p>';
 }
 
 function probCell(label, value, tone) {
@@ -851,26 +935,30 @@ function opt(v, sel) {
 
 /* ---------- Fixtures ---------- */
 function renderFixtures() {
-  const club = userClub();
-  const rows = state.fixtures.map(w => {
-    const fx = w.matches.find(m => m.home === club.id || m.away === club.id);
-    if (!fx) return '';
-    const isHome = fx.home === club.id;
-    const opp = state.league.clubsById[isHome ? fx.away : fx.home];
-    const status = w.played ? 'played' : (w.week === state.currentWeek + 1 ? 'next' : 'upcoming');
+  syncSeasonCalendar();
+  const rows = state.seasonCalendar.map((event, i) => {
+    const fx = fixtureForCalendarEvent(event);
+    const home = fx ? state.league.clubsById[fx.home] : null;
+    const away = fx ? state.league.clubsById[fx.away] : null;
+    const status = event.played ? 'played' : (i === state.currentEvent ? 'next' : 'scheduled');
+    const detail = fx
+      ? `${home.name} vs ${away.name}`
+      : event.type === 'cup' ? `${event.label} draw to be confirmed` : event.label;
     return `<tr class="${status === 'next' ? 'highlight-row' : ''}">
-      <td class="num">${w.week}</td>
-      <td>${isHome ? '🏠 Home' : '✈ Away'}</td>
-      <td>${opp.name}</td>
-      <td class="center">${w.played ? '✓' : (status === 'next' ? 'Next' : '—')}</td>
+      <td>${event.date}</td>
+      <td>${event.type === 'cup' ? state.cup.name : 'League'}</td>
+      <td>${event.label}</td>
+      <td>${detail}</td>
+      <td class="center">${event.played ? 'Done' : (status === 'next' ? 'Next' : 'Scheduled')}</td>
     </tr>`;
   }).join('');
 
   document.getElementById('fixtures').innerHTML = `
     <div class="card">
-      <h2>Fixtures · Season ${state.season}</h2>
+      <h2>Game Day Calendar · Season ${state.season}</h2>
+      <p class="muted small mt">League matchweeks and cup rounds are pre-scheduled here. Cup draws populate as each previous round is completed.</p>
       <table>
-        <thead><tr><th class="num">MW</th><th>Venue</th><th>Opponent</th><th class="center">Status</th></tr></thead>
+        <thead><tr><th>Date</th><th>Competition</th><th>Round</th><th>Fixture</th><th class="center">Status</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -882,13 +970,12 @@ function renderCup() {
   const cup = state.cup || createCup(state.league.clubs, state.season);
   const current = cupCurrentRound(cup);
   const status = cupStatus(cup, club.id);
-  const ready = cupCanPlay(cup, state.currentWeek);
   const rounds = cup.rounds.map((r, i) => `
     <tr class="${i === cup.roundIndex && cup.status === 'active' ? 'highlight-row' : ''}">
       <td>${r.name}</td>
-      <td class="num">MW ${r.unlockWeek}</td>
+      <td>${calendarDateForCupRound(i)}</td>
       <td class="num">£${fmt(r.prize)}</td>
-      <td>${r.played ? 'Played' : i === cup.roundIndex ? (ready ? 'Ready' : 'Scheduled') : 'Pending'}</td>
+      <td>${r.played ? 'Played' : i === cup.roundIndex ? 'Next draw' : 'Scheduled'}</td>
     </tr>`).join('');
 
   document.getElementById('cup').innerHTML = `
@@ -906,7 +993,7 @@ function renderCup() {
         <div class="stat"><strong>Prize</strong><span>${current ? `£${fmt(current.prize)}` : '—'}</span></div>
         <div class="stat"><strong>Champion</strong><span>${cup.championId ? state.league.clubsById[cup.championId].short : '—'}</span></div>
       </div>
-      <button class="btn mt" id="cupPlay" ${!ready ? 'disabled' : ''}>Play Current Round</button>
+      <button class="btn-ghost mt" id="cupCalendar">View calendar</button>
     </div>
 
     <div class="grid">
@@ -916,7 +1003,7 @@ function renderCup() {
       </div>
       <div class="card mb0">
         <h3>Round Schedule</h3>
-        <table><thead><tr><th>Round</th><th class="num">Unlock</th><th class="num">Prize</th><th>Status</th></tr></thead><tbody>${rounds}</tbody></table>
+        <table><thead><tr><th>Round</th><th>Date</th><th class="num">Prize</th><th>Status</th></tr></thead><tbody>${rounds}</tbody></table>
       </div>
     </div>
 
@@ -925,8 +1012,8 @@ function renderCup() {
       ${renderCupResults(state.lastCupResults)}
     </div>`;
 
-  const playBtn = document.getElementById('cupPlay');
-  if (playBtn) playBtn.addEventListener('click', onPlayCupRound);
+  const calBtn = document.getElementById('cupCalendar');
+  if (calBtn) calBtn.addEventListener('click', () => switchTab('fixtures'));
 }
 
 function renderCupFixtures(round) {
@@ -1345,12 +1432,23 @@ function renderStadium() {
 /* Game loop                                                          */
 /* ------------------------------------------------------------------ */
 function onPlayNext() {
-  const week = state.fixtures[state.currentWeek];
+  const event = nextCalendarEvent();
+  if (!event) return;
+  if (event.type === 'cup') playCupEvent(event);
+  else playLeagueEvent(event);
+  syncSeasonCalendar();
+  state.currentEvent = nextCalendarIndex();
+  render();
+}
+
+function playLeagueEvent(event) {
+  const week = state.fixtures.find(w => w.week === event.week);
   if (!week) return;
   const beforePos = divisionStandings(state.league.clubs, userDivision()).indexOf(userClub()) + 1;
   const results = playMatchweek(week, state.league.clubsById);
   state.lastResults = results;
-  state.currentWeek++;
+  state.currentWeek = Math.max(state.currentWeek, event.week);
+  event.played = true;
 
   // Show the user's own match in the modal.
   const uc = userClub();
@@ -1358,21 +1456,21 @@ function onPlayNext() {
   if (mine) {
     const afterPos = divisionStandings(state.league.clubs, uc.division).indexOf(uc) + 1;
     addMatchInbox(mine, beforePos, afterPos);
-    showMatchModal(mine);
+    showMatchModal(mine, { competition: 'League', roundName: event.label, date: event.date });
   }
 
   updateFormAndMorale(results);
   processWeeklyInjuries(results).forEach(event => addStory(injuryStory(event, uc)));
-  render();
 }
 
-function onPlayCupRound() {
-  if (!cupCanPlay(state.cup, state.currentWeek)) return;
+function playCupEvent(event) {
+  if (event.roundIndex !== state.cup?.roundIndex) return;
   const uc = userClub();
   const played = playCupRound(state.cup, state.league.clubsById);
   if (!played.round) return;
 
   state.lastCupResults = played.results;
+  event.played = true;
   updateFormAndMorale(played.results);
   processWeeklyInjuries(played.results).forEach(event => addStory(injuryStory(event, uc)));
 
@@ -1383,6 +1481,13 @@ function onPlayCupRound() {
     if (prize) uc.cash += prize;
     state.cup.userBestRound = played.round.name;
     addStory(cupStory({ result: mine, round: played.round, userClub: uc, prize }));
+    showMatchModal(mine, {
+      competition: state.cup.name,
+      roundName: played.round.name,
+      date: event.date,
+      cupResult: mine,
+      prize,
+    });
     if (played.championId === uc.id) {
       state.clubHistory = state.clubHistory || createClubHistory(uc);
       state.clubHistory.honours = [
@@ -1398,15 +1503,19 @@ function onPlayCupRound() {
     clubsById: state.league.clubsById,
     championId: played.championId,
   }));
-
-  const userLine = mine
-    ? `${mine.home.short} ${mine.homeGoals}-${mine.awayGoals} ${mine.away.short}${mine.tiebreak ? `, pens ${mine.tiebreak.penaltyScore}` : ''}.`
-    : `${played.round.name} complete.`;
-  alert(`${state.cup.name}: ${played.round.name}\n\n${userLine}`);
-  render();
 }
 
-function showMatchModal(r) {
+function onPlayCupRound() {
+  const event = nextCalendarEvent();
+  if (event?.type === 'cup') {
+    playCupEvent(event);
+    syncSeasonCalendar();
+    state.currentEvent = nextCalendarIndex();
+    render();
+  }
+}
+
+function showMatchModal(r, context = {}) {
   const uc = userClub();
   const events = [];
   r.timeline.home.forEach(m => events.push({ min: m, team: r.home.short, side: 'home' }));
@@ -1416,16 +1525,23 @@ function showMatchModal(r) {
     ? events.map(e => `<li><span class="min">${e.min}'</span> ⚽ ${e.team}</li>`).join('')
     : '<li class="muted">No goals.</li>';
 
-  const won = (r.home === uc && r.result === 'H') || (r.away === uc && r.result === 'A');
+  const isCup = !!context.cupResult || !!r.winner;
+  const won = isCup
+    ? r.winner === uc
+    : (r.home === uc && r.result === 'H') || (r.away === uc && r.result === 'A');
   const drew = r.result === 'D';
-  const verdict = drew ? 'Draw' : won ? 'Win' : 'Loss';
-  const vClass = drew ? 'warning' : won ? 'success' : 'danger';
+  const verdict = isCup ? (won ? 'Win' : 'Loss') : drew ? 'Draw' : won ? 'Win' : 'Loss';
+  const vClass = !isCup && drew ? 'warning' : won ? 'success' : 'danger';
   const preview = matchPreview({ home: r.home.id, away: r.away.id });
   const userProb = pct(preview.userWin);
   const drawProb = pct(preview.probs.draw);
   const oppProb = pct(preview.oppWin);
+  const tieBreakHtml = r.tiebreak ? `
+      <p>${r.tiebreak.method} — <strong>${r.tiebreak.penaltyScore}</strong>. Shootout weighting: ${r.home.short} ${pct(r.tiebreak.homeChance)}%, ${r.away.short} ${pct(1 - r.tiebreak.homeChance)}%.</p>` : '';
+  const prizeHtml = context.prize ? `<p class="success">Prize money earned: <strong>£${fmt(context.prize)}</strong>.</p>` : '';
 
   document.getElementById('matchModalContent').innerHTML = `
+    <p class="center muted small">${context.date ? `${context.date} · ` : ''}${context.competition || 'League'}${context.roundName ? ` · ${context.roundName}` : ''}</p>
     <h2 class="center">${r.home.name} vs ${r.away.name}</h2>
     <p class="scoreline">${r.homeGoals} – ${r.awayGoals}</p>
     <p class="center ${vClass}"><strong>${verdict}</strong></p>
@@ -1436,6 +1552,8 @@ function showMatchModal(r) {
       <p>Ratings — ${r.home.short} ATT ${r.ratings.homeAtt} / DEF ${r.ratings.homeDef} (incl. +${HOME_BONUS} home)</p>
       <p>Ratings — ${r.away.short} ATT ${r.ratings.awayAtt} / DEF ${r.ratings.awayDef}</p>
       <p>Pre-match probabilities — you ${userProb}%, draw ${drawProb}%, ${preview.opponent.short} ${oppProb}%.</p>
+      ${tieBreakHtml}
+      ${prizeHtml}
       <p class="muted small">Goals drawn from a fair Poisson model — favourites win at the correct rate, with no rigged streaks.</p>
     </div>`;
   document.getElementById('matchModal').hidden = false;
@@ -1581,6 +1699,8 @@ function onNewSeason() {
   state.lastResults = [];
   state.cup = createCup(clubs, state.season);
   state.lastCupResults = [];
+  state.seasonCalendar = buildSeasonCalendar(state.fixtures, state.cup, state.season);
+  state.currentEvent = 0;
 
   // 6a. The board sets a fresh objective for the new season & division.
   state.objective = setLeagueObjective(uc, state.lastMove, clubsInDivision(clubs, uc.division).length);
@@ -1639,6 +1759,18 @@ function onNewSeason() {
 function fmt(n) { return Math.round(n).toLocaleString('en-GB'); }
 function pct(n) { return Math.round(n * 100); }
 function signed(n) { return n > 0 ? `+${n}` : `${n}`; }
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+function formatGameDate(date) {
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+function calendarDateForCupRound(roundIndex) {
+  const event = state.seasonCalendar.find(e => e.type === 'cup' && e.roundIndex === roundIndex);
+  return event?.date || 'Scheduled';
+}
 function formatRunway(runway) {
   if (!Number.isFinite(runway)) return 'Safe';
   return `${runway.toFixed(1)} yrs`;
