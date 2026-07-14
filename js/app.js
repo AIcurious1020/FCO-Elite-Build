@@ -21,6 +21,9 @@ import {
   applyConfidence, trackStatus, confidenceLabel,
   START_CONFIDENCE,
 } from './objectives.js';
+import {
+  developSquad, generateAcademyIntake, summariseDevelopment,
+} from './development.js';
 
 // v3 save schema (multi-division + board objectives). Older saves are
 // incompatible, so they are simply ignored and a fresh pyramid game starts.
@@ -43,6 +46,7 @@ const state = {
   lastReview: null,       // last end-of-season board review (for the dashboard)
   lastMove: null,         // 'promoted' | 'relegated' | null — how we arrived this season
   inbox: [],              // season hub messages shown on the dashboard
+  developmentReport: null,
 };
 
 /* ------------------------------------------------------------------ */
@@ -72,6 +76,7 @@ function newGame() {
   state.jobStatus = 'secure';
   state.lastMove = null;
   state.lastReview = null;
+  state.developmentReport = null;
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
@@ -116,6 +121,7 @@ function save() {
       lastReview: state.lastReview,
       lastMove: state.lastMove,
       inbox: state.inbox,
+      developmentReport: state.developmentReport,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -146,6 +152,7 @@ function load() {
     state.lastReview = data.lastReview ?? null;
     state.lastMove = data.lastMove ?? null;
     state.inbox = data.inbox ?? [];
+    state.developmentReport = data.developmentReport ?? null;
     // Safety: if an objective is missing (older-but-compatible save), set one.
     if (!state.objective) {
       const uc = clubsById[data.userClubId];
@@ -335,6 +342,8 @@ function renderDashboard() {
       </div>
     </div>
 
+    ${renderDevelopmentSummary()}
+
     ${renderLastResults()}
   `;
 
@@ -342,6 +351,26 @@ function renderDashboard() {
   if (playBtn) playBtn.addEventListener('click', onPlayNext);
   const ns = document.getElementById('newSeason');
   if (ns) ns.addEventListener('click', onNewSeason);
+}
+
+function renderDevelopmentSummary() {
+  const report = state.developmentReport;
+  if (!report) return '';
+  const summary = report.summary;
+  const prospect = summary.topProspect;
+  return `<div class="card">
+    <div class="flex-between">
+      <h2 class="mb0">Development Report</h2>
+      <span class="muted small">End of season ${report.season}</span>
+    </div>
+    <div class="stat-row mt">
+      <div class="stat"><strong>Improved</strong><span class="success">${summary.improved}</span></div>
+      <div class="stat"><strong>Declined</strong><span class="danger">${summary.declined}</span></div>
+      <div class="stat"><strong>Academy</strong><span class="gold">${report.intake.length}</span></div>
+    </div>
+    <p class="muted small mt">${summary.text}</p>
+    ${prospect ? `<p class="small gold">Top prospect: ${prospect.name} · ${prospect.position} · ${prospect.overall} OVR / ${prospect.potential} POT</p>` : ''}
+  </div>`;
 }
 
 function renderInbox() {
@@ -481,6 +510,7 @@ function renderSquad() {
   `).join('');
 
   document.getElementById('squad').innerHTML = `
+    ${renderSquadDevelopmentReport()}
     <div class="card">
       <h2>Squad · ${players.length} players <span class="muted small">(● = starting XI)</span></h2>
       <div style="overflow-x:auto">
@@ -507,6 +537,64 @@ function renderSquad() {
       }
     });
   });
+}
+
+function renderSquadDevelopmentReport() {
+  const report = state.developmentReport;
+  if (!report) return '';
+  const changeRows = report.changes.length
+    ? report.changes.map(c => `<tr>
+        <td>${c.name}</td>
+        <td><span class="pill ${c.position.toLowerCase()}">${c.position}</span></td>
+        <td class="num">${c.age}</td>
+        <td class="num">${c.before}</td>
+        <td class="num ${c.delta > 0 ? 'success' : 'danger'}">${signed(c.delta)}</td>
+        <td class="num"><strong>${c.after}</strong></td>
+        <td class="small muted">${c.reason}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="7" class="muted">No rating changes last season.</td></tr>';
+  const intakeRows = report.intake.length
+    ? report.intake.map(p => `<tr>
+        <td>${p.name}</td>
+        <td><span class="pill ${p.position.toLowerCase()}">${p.position}</span></td>
+        <td class="num">${p.age}</td>
+        <td class="num"><strong>${Player.overallOf(p)}</strong></td>
+        <td class="num gold">${p.potential}</td>
+        <td class="num">£${fmt(p.wage)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="muted">No academy intake recorded.</td></tr>';
+
+  return `<div class="card">
+    <div class="flex-between">
+      <h2 class="mb0">Development Report</h2>
+      <span class="muted small">Season ${report.season}</span>
+    </div>
+    <p class="muted small mt">${report.summary.text}</p>
+    <div class="grid mt">
+      <div class="mini-panel">
+        <span class="muted small">Training impact</span>
+        <strong>Level ${userClub().training}</strong>
+      </div>
+      <div class="mini-panel">
+        <span class="muted small">Academy pathway</span>
+        <strong>Level ${userClub().academy}</strong>
+      </div>
+    </div>
+    <h3 class="mt">Player Changes</h3>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">Before</th><th class="num">Change</th><th class="num">Now</th><th>Reason</th></tr></thead>
+        <tbody>${changeRows}</tbody>
+      </table>
+    </div>
+    <h3 class="mt">Academy Intake</h3>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th><th class="num">POT</th><th class="num">Wage</th></tr></thead>
+        <tbody>${intakeRows}</tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 /* ---------- Tactics ---------- */
@@ -758,12 +846,12 @@ function renderStadium() {
     <div class="grid">
       <div class="card mb0">
         <h3>Youth Academy · Level ${club.academy}</h3>
-        <p class="muted small">Higher levels would produce better youth prospects each season.</p>
+        <p class="muted small">Produces 1 youth prospect each season, or 2 from level 4. Higher levels improve starting OVR and potential.</p>
         <button class="btn btn-sm" id="upAcademy" ${club.academy >= 5 || club.cash < academyCost ? 'disabled' : ''}>Upgrade (£${fmt(academyCost)})</button>
       </div>
       <div class="card mb0">
         <h3>Training · Level ${club.training}</h3>
-        <p class="muted small">Higher levels improve player development and form recovery.</p>
+        <p class="muted small">Improves end-of-season growth and softens decline for older players.</p>
         <button class="btn btn-sm" id="upTraining" ${club.training >= 5 || club.cash < trainingCost ? 'disabled' : ''}>Upgrade (£${fmt(trainingCost)})</button>
       </div>
     </div>`;
@@ -932,11 +1020,25 @@ function onNewSeason() {
   // 4. Promotion & relegation across the whole pyramid.
   const moves = applyPromotionRelegation(clubs, uc.id);
 
-  // 5. Reset records, age players, refresh values.
+  // 5. Reset records and apply transparent player development.
+  let userDevelopment = [];
+  let academyIntake = [];
   clubs.forEach(c => {
     c.resetSeasonRecord();
-    c.players.forEach(p => { p.age++; p.appearances = 0; p.goals = 0; p.refreshValue(); });
+    const changes = developSquad(c, state.season);
+    c.players.forEach(p => { p.appearances = 0; p.goals = 0; });
+    if (c === uc) {
+      userDevelopment = changes;
+      academyIntake = generateAcademyIntake(c, state.season);
+      c.players.push(...academyIntake);
+    }
   });
+  state.developmentReport = {
+    season: state.season,
+    changes: userDevelopment.slice(0, 10),
+    intake: academyIntake.map(serialisePlayer),
+    summary: summariseDevelopment(userDevelopment, academyIntake),
+  };
 
   // 5a. Record how the user arrived in next season's division (drives the
   //     board's objective — promoted clubs get a forgiving "survive" target).
@@ -954,6 +1056,7 @@ function onNewSeason() {
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
   addInbox('Season review complete', `${grading.message} ${review.jobMessage} Balance now £${fmt(uc.cash)}.`, 'board');
+  addInbox('Player development report', state.developmentReport.summary.text, 'development');
   addInbox('New objective set', `${state.objective.label}: ${state.objective.reason}`, 'board');
   addInbox('Finance forecast refreshed', state.financeObjective.detail, 'finance');
 
@@ -985,6 +1088,7 @@ function onNewSeason() {
     `P&L: ${pnl.profit >= 0 ? '+' : '−'}£${fmt(Math.abs(pnl.profit))}\n` +
     bonusLine +
     `New balance: £${fmt(uc.cash)}\n\n` +
+    `Development: ${state.developmentReport.summary.text}\n\n` +
     `New objective: ${state.objective.label} (${state.objective.divisionName}).\n` +
     (otherPromos.length ? `\nAlso promoted: ${otherPromos.join(', ')}` : '')
   );
@@ -999,6 +1103,7 @@ function onNewSeason() {
 /* ------------------------------------------------------------------ */
 function fmt(n) { return Math.round(n).toLocaleString('en-GB'); }
 function pct(n) { return Math.round(n * 100); }
+function signed(n) { return n > 0 ? `+${n}` : `${n}`; }
 function ord(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return s[(v - 20) % 10] || s[v] || s[0]; }
 function avgOverall(club) {
   if (!club.players.length) return 0;
