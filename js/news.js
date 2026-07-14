@@ -204,6 +204,45 @@ export function cupDrawStory({ cup, clubsById, userClub }) {
   };
 }
 
+export function rivalTransferStory(activity) {
+  return {
+    title: `${activity.club.short} sign ${activity.player.name}`,
+    body: `${activity.club.name} added ${activity.player.position} ${activity.player.name} for £${fmt(activity.fee)}. The move targets ${activity.needLabel.toLowerCase()} and lifts their squad depth.`,
+    type: 'transfer',
+    category: 'Transfers',
+    importance: activity.club.division === activity.userDivision ? 2 : 1,
+  };
+}
+
+export function clubsToWatchStory({ leader, chaser, pressureClub, userClub }) {
+  if (!leader) return null;
+  if (leader === userClub) {
+    return {
+      title: `${userClub.short} become the club to catch`,
+      body: `${userClub.name} lead the division after the latest results. The rest of the league now has a clear target.`,
+      type: 'league',
+      category: 'League',
+      importance: 2,
+    };
+  }
+  if (pressureClub) {
+    return {
+      title: `${pressureClub.short} under pressure near the bottom`,
+      body: `${pressureClub.name} are drifting into danger while ${leader.name} set the pace at the top.`,
+      type: 'league',
+      category: 'League',
+      importance: 1,
+    };
+  }
+  return {
+    title: `${leader.short} set the standard`,
+    body: `${leader.name} lead the division${chaser ? `, with ${chaser.name} keeping close watch` : ''}. ${userClub.name} need to keep pace with the early storylines.`,
+    type: 'league',
+    category: 'League',
+    importance: 1,
+  };
+}
+
 function fmt(n) {
   return Math.round(n).toLocaleString('en-GB');
 }

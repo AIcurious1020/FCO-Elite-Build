@@ -32,7 +32,7 @@ import {
 import {
   matchStory, divisionStory, transferMarketStory, transferCompletedStory,
   infrastructureStory, seasonReviewStories, objectiveStory, injuryStory,
-  cupStory, cupRoundStory, cupDrawStory,
+  cupStory, cupRoundStory, cupDrawStory, rivalTransferStory, clubsToWatchStory,
 } from './news.js';
 import {
   processWeeklyInjuries, injuredPlayers, availabilityByPosition, missingStarters,
@@ -71,6 +71,7 @@ const state = {
   seasonCalendar: [],
   currentEvent: 0,
   resultMemory: [],
+  worldActivity: [],
 };
 
 /* ------------------------------------------------------------------ */
@@ -108,6 +109,7 @@ function newGame() {
   state.seasonCalendar = buildSeasonCalendar(state.fixtures, state.cup, state.season);
   state.currentEvent = 0;
   state.resultMemory = [];
+  state.worldActivity = [];
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
@@ -243,6 +245,82 @@ function rememberRoundSummary(event, played) {
   event.played = true;
 }
 
+function processWorldActivity(event) {
+  if (!event || event.type !== 'league') return;
+  const uc = userClub();
+  const table = divisionStandings(state.league.clubs, uc.division);
+
+  if (event.week % 2 === 0) {
+    const activity = runRivalTransfer(table, event);
+    if (activity) addStory(rivalTransferStory(activity));
+  }
+
+  if (event.week % 3 === 0 || event.week === 1) {
+    const leader = table[0];
+    const chaser = table[1] || null;
+    const pressureClub = table.at(-1);
+    addStory(clubsToWatchStory({
+      leader,
+      chaser,
+      pressureClub: pressureClub !== uc ? pressureClub : null,
+      userClub: uc,
+    }));
+  }
+}
+
+function runRivalTransfer(table, event) {
+  const uc = userClub();
+  const candidates = table
+    .filter(c => c !== uc && c.cash > Math.max(120_000, projectedRivalFee(c)))
+    .sort((a, b) => transferUrgency(b) - transferUrgency(a) || a.name.localeCompare(b.name));
+  const club = candidates[0];
+  if (!club) return null;
+  const need = squadNeeds(club).sort((a, b) => needScore(b) - needScore(a))[0];
+  if (!need || need.priority === 'covered') return null;
+
+  const pool = generateMarket(club, 4).filter(p => p.position === need.position || need.priority === 'urgent');
+  const target = (pool.length ? pool : generateMarket(club, 2))
+    .sort((a, b) => b.overall - a.overall)[0];
+  if (!target) return null;
+
+  const fee = Math.min(Math.round(target.value * 0.9), Math.round(club.cash * 0.18));
+  if (fee <= 0 || fee > club.cash) return null;
+  club.cash -= fee;
+  club.players.push(target);
+  const activity = {
+    season: state.season,
+    week: event.week,
+    club,
+    player: target,
+    fee,
+    needLabel: need.label,
+    userDivision: uc.division,
+  };
+  state.worldActivity.unshift({
+    season: activity.season,
+    week: activity.week,
+    club: club.id,
+    player: serialisePlayer(target),
+    fee,
+    needLabel: activity.needLabel,
+  });
+  state.worldActivity = state.worldActivity.slice(0, 25);
+  return activity;
+}
+
+function transferUrgency(club) {
+  return squadNeeds(club).reduce((score, need) => score + needScore(need), 0);
+}
+
+function needScore(need) {
+  return need.priority === 'urgent' ? 3 : need.priority === 'upgrade' ? 2 : 0;
+}
+
+function projectedRivalFee(club) {
+  const avg = avgOverall(club);
+  return Math.round(Math.pow(avg / 10, 3) * 650);
+}
+
 /* ------------------------------------------------------------------ */
 /* Persistence (localStorage) — plain-object serialisation           */
 /* ------------------------------------------------------------------ */
@@ -276,6 +354,7 @@ function save() {
       seasonCalendar: state.seasonCalendar,
       currentEvent: state.currentEvent,
       resultMemory: state.resultMemory,
+      worldActivity: state.worldActivity,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -314,6 +393,7 @@ function load() {
     state.lastCupResults = (data.lastCupResults || []).map(r => hydrateCupResult(r, clubsById));
     state.seasonCalendar = data.seasonCalendar ?? buildSeasonCalendar(state.fixtures, state.cup, state.season);
     state.resultMemory = data.resultMemory ?? [];
+    state.worldActivity = data.worldActivity ?? [];
     syncSeasonCalendar();
     state.currentEvent = nextCalendarIndex();
     // Safety: if an objective is missing (older-but-compatible save), set one.
@@ -540,6 +620,8 @@ function renderDashboard() {
 
     ${renderDevelopmentSummary()}
 
+    ${renderClubsToWatch()}
+
     ${renderSeasonTimeline()}
 
     ${renderLastResults()}
@@ -600,6 +682,41 @@ function renderSeasonTimeline() {
       <button class="btn-ghost btn-sm" id="openTimelineCalendar">Open calendar</button>
     </div>
     <ul class="plain-list mt">${items}</ul>
+  </div>`;
+}
+
+function renderClubsToWatch() {
+  const uc = userClub();
+  const table = divisionStandings(state.league.clubs, uc.division);
+  const leader = table[0];
+  const chaser = table[1] || null;
+  const danger = table.at(-1);
+  const latestMove = state.worldActivity
+    .map(a => ({ ...a, clubObj: state.league.clubsById[a.club] }))
+    .find(a => a.clubObj?.division === uc.division);
+
+  return `<div class="card">
+    <div class="flex-between">
+      <h2 class="mb0">Clubs to Watch</h2>
+      <span class="muted small">${DIVISIONS[uc.division].name}</span>
+    </div>
+    <div class="grid mt">
+      ${watchClubCard('Pace-setter', leader)}
+      ${watchClubCard('Chaser', chaser)}
+      ${watchClubCard('Under pressure', danger)}
+    </div>
+    ${latestMove ? `<p class="muted small mt">Latest rival move: ${latestMove.clubObj.short} signed ${latestMove.player.name} for £${fmt(latestMove.fee)}.</p>` : '<p class="muted small mt">Rival clubs will make occasional budget-limited moves as the season develops.</p>'}
+  </div>`;
+}
+
+function watchClubCard(label, club) {
+  if (!club) return '';
+  const table = divisionStandings(state.league.clubs, club.division);
+  const pos = table.indexOf(club) + 1;
+  return `<div class="mini-panel">
+    <span class="muted small">${label}</span>
+    <strong>${club.short} · ${pos}${ord(pos)}</strong>
+    <span class="muted small">${club.won}-${club.drawn}-${club.lost} · ${club.points} pts · Avg ${avgOverall(club)}</span>
   </div>`;
 }
 
@@ -1620,6 +1737,7 @@ function playLeagueEvent(event) {
 
   updateFormAndMorale(results);
   processWeeklyInjuries(results).forEach(event => addStory(injuryStory(event, uc)));
+  processWorldActivity(event);
 }
 
 function playCupEvent(event) {
@@ -1864,6 +1982,7 @@ function onNewSeason() {
   state.seasonCalendar = buildSeasonCalendar(state.fixtures, state.cup, state.season);
   state.currentEvent = 0;
   state.resultMemory = [];
+  state.worldActivity = [];
 
   // 6a. The board sets a fresh objective for the new season & division.
   state.objective = setLeagueObjective(uc, state.lastMove, clubsInDivision(clubs, uc.division).length);
