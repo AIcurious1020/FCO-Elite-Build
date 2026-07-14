@@ -218,6 +218,8 @@ tbody tr:hover td { background: rgba(255,255,255,.03); }
 .inbox-dot.board { background: var(--accent); }
 .inbox-dot.finance { background: var(--gold); }
 .inbox-dot.transfer { background: var(--accent); }
+.inbox-dot.history { background: var(--warning); }
+.inbox-dot.development { background: var(--accent-2); }
 .inbox-dot.result-good { background: var(--accent-2); }
 .inbox-dot.result-neutral { background: var(--warning); }
 .inbox-dot.result-bad { background: var(--danger); }
@@ -356,6 +358,19 @@ tbody tr:hover td { background: rgba(255,255,255,.03); }
   font-size: 20px;
   margin: 3px 0;
 }
+
+/* ---------- Club profile ---------- */
+.plain-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.plain-list li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.plain-list li:last-child { border-bottom: none; }
 
 /* ---------- Utilities ---------- */
 .muted { color: var(--muted); }

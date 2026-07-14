@@ -26,6 +26,9 @@ import {
 import {
   developSquad, generateAcademyIntake, summariseDevelopment,
 } from './development.js';
+import {
+  createClubHistory, buildSeasonMemory, applySeasonMemory, fanMood, clubIdentity,
+} from './history.js';
 
 // v3 save schema (multi-division + board objectives). Older saves are
 // incompatible, so they are simply ignored and a fresh pyramid game starts.
@@ -51,6 +54,7 @@ const state = {
   inbox: [],              // season hub messages shown on the dashboard
   developmentReport: null,
   financeReport: null,
+  clubHistory: null,
 };
 
 /* ------------------------------------------------------------------ */
@@ -82,6 +86,7 @@ function newGame() {
   state.lastReview = null;
   state.developmentReport = null;
   state.financeReport = null;
+  state.clubHistory = createClubHistory(uc);
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
@@ -129,6 +134,7 @@ function save() {
       inbox: state.inbox,
       developmentReport: state.developmentReport,
       financeReport: state.financeReport,
+      clubHistory: state.clubHistory,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -162,6 +168,7 @@ function load() {
     state.inbox = data.inbox ?? [];
     state.developmentReport = data.developmentReport ?? null;
     state.financeReport = data.financeReport ?? null;
+    state.clubHistory = data.clubHistory ?? createClubHistory(clubsById[data.userClubId]);
     // Safety: if an objective is missing (older-but-compatible save), set one.
     if (!state.objective) {
       const uc = clubsById[data.userClubId];
@@ -246,6 +253,7 @@ function render() {
 
   const renderers = {
     dashboard: renderDashboard,
+    club: renderClubProfile,
     squad: renderSquad,
     tactics: renderTactics,
     fixtures: renderFixtures,
@@ -383,6 +391,77 @@ function renderDevelopmentSummary() {
     <p class="muted small mt">${summary.text}</p>
     ${prospect ? `<p class="small gold">Top prospect: ${prospect.name} · ${prospect.position} · ${prospect.overall} OVR / ${prospect.potential} POT</p>` : ''}
   </div>`;
+}
+
+/* ---------- Club Profile ---------- */
+function renderClubProfile() {
+  const club = userClub();
+  const history = state.clubHistory || createClubHistory(club);
+  const latest = history.seasons?.at(-1) || null;
+  const mood = fanMood(history, state.confidence, latest);
+  const identity = clubIdentity(history, club);
+  const honours = history.honours || [];
+  const records = history.records || {};
+
+  document.getElementById('club').innerHTML = `
+    <div class="card">
+      <div class="flex-between">
+        <div>
+          <h2 class="mb0">${club.name}</h2>
+          <p class="muted small">${identity} · Reputation ${club.reputation}/10 · Season ${state.season}</p>
+        </div>
+        <span class="pill obj-${mood.band === 'safe' ? 'ontrack' : mood.band === 'warning' ? 'close' : mood.band === 'danger' ? 'offtrack' : 'pending'}">${mood.label}</span>
+      </div>
+      <p class="muted mt">${mood.text}</p>
+      <div class="stat-row mt">
+        <div class="stat"><strong>Seasons</strong><span>${history.seasons?.length || 0}</span></div>
+        <div class="stat"><strong>Honours</strong><span class="gold">${honours.length}</span></div>
+        <div class="stat"><strong>Highest Rep</strong><span>${records.highestReputation || club.reputation}</span></div>
+        <div class="stat"><strong>Record Balance</strong><span>£${fmt(records.highestBalance || club.cash)}</span></div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card mb0">
+        <h3>Club Records</h3>
+        <table><tbody>
+          <tr><td>Highest finish</td><td class="num">${formatHighestFinish(records.highestFinish)}</td></tr>
+          <tr><td>Best points season</td><td class="num">${records.bestPoints ? `${records.bestPoints.points} pts` : '—'}</td></tr>
+          <tr><td>Biggest win</td><td class="num">${formatResultRecord(records.biggestWin)}</td></tr>
+          <tr><td>Biggest loss</td><td class="num">${formatResultRecord(records.biggestLoss)}</td></tr>
+        </tbody></table>
+      </div>
+      <div class="card mb0">
+        <h3>Honours</h3>
+        ${honours.length ? `<ul class="plain-list">${honours.slice().reverse().map(h => `<li><strong>S${h.season}</strong> ${h.label}</li>`).join('')}</ul>` : '<p class="muted small">No honours yet. The climb starts here.</p>'}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h3 class="mb0">Season History</h3>
+        <span class="muted small">${history.seasons?.length || 0} completed</span>
+      </div>
+      <div style="overflow-x:auto" class="mt">
+        <table>
+          <thead><tr><th>Season</th><th>Division</th><th class="num">Finish</th><th class="num">Pts</th><th>Objective</th><th>Outcome</th><th class="num">P&L</th></tr></thead>
+          <tbody>${renderSeasonHistoryRows(history.seasons || [])}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function renderSeasonHistoryRows(seasons) {
+  if (!seasons.length) return '<tr><td colspan="7" class="muted">No completed seasons yet.</td></tr>';
+  return seasons.slice().reverse().map(s => `<tr>
+    <td>S${s.season}</td>
+    <td>${s.divisionName}</td>
+    <td class="num">${s.finalPos}${ord(s.finalPos)}</td>
+    <td class="num">${s.points}</td>
+    <td>${s.objective}</td>
+    <td>${s.summary}</td>
+    <td class="num ${s.profit >= 0 ? 'success' : 'danger'}">${s.profit >= 0 ? '+' : '−'}£${fmt(Math.abs(s.profit))}</td>
+  </tr>`).join('');
 }
 
 function renderInbox() {
@@ -1198,6 +1277,18 @@ function onNewSeason() {
 
   // 4. Promotion & relegation across the whole pyramid.
   const moves = applyPromotionRelegation(clubs, uc.id);
+  const seasonMemory = buildSeasonMemory({
+    season: state.season,
+    club: uc,
+    divisionName: oldDivName,
+    finalPos,
+    divisionSize: myTable.length,
+    objective: state.objective,
+    grading,
+    move: moves.userMove,
+    pnl: state.financeReport,
+  });
+  state.clubHistory = applySeasonMemory(state.clubHistory || createClubHistory(uc), seasonMemory, state.lastResults);
 
   // 5. Reset records and apply transparent player development.
   let userDevelopment = [];
@@ -1235,6 +1326,7 @@ function onNewSeason() {
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
   addInbox('Season review complete', `${grading.message} ${review.jobMessage} Balance now £${fmt(uc.cash)}.`, 'board');
+  addInbox('Club history updated', seasonMemory.summary, 'history');
   addInbox('Finance report', state.financeReport.summary, 'finance');
   addInbox('Player development report', state.developmentReport.summary.text, 'development');
   addInbox('New objective set', `${state.objective.label}: ${state.objective.reason}`, 'board');
@@ -1287,6 +1379,14 @@ function signed(n) { return n > 0 ? `+${n}` : `${n}`; }
 function formatRunway(runway) {
   if (!Number.isFinite(runway)) return 'Safe';
   return `${runway.toFixed(1)} yrs`;
+}
+function formatHighestFinish(record) {
+  if (!record) return '—';
+  return `${record.finalPos}${ord(record.finalPos)} · ${record.divisionName}`;
+}
+function formatResultRecord(record) {
+  if (!record) return '—';
+  return `${record.score} vs ${record.opponent}`;
 }
 function ord(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return s[(v - 20) % 10] || s[v] || s[0]; }
 function avgOverall(club) {
