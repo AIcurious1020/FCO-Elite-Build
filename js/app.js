@@ -7,7 +7,8 @@ import { Player } from './player.js';
 import { simulateMatch, HOME_BONUS, outcomeProbabilities } from './match.js';
 import { generateFixtures, playMatchweek, recordResult, standings } from './league.js';
 import {
-  seasonRevenue, seasonCosts, financialHealth, applySeasonFinances,
+  financialHealth, applySeasonFinances,
+  financeForecast, stadiumExpansionPlan, ticketPricePlan, infrastructureUpgradePlan,
 } from './finance.js';
 import {
   generateMarket, evaluateBid, completeTransferIn, sellPlayer,
@@ -49,6 +50,7 @@ const state = {
   lastMove: null,         // 'promoted' | 'relegated' | null — how we arrived this season
   inbox: [],              // season hub messages shown on the dashboard
   developmentReport: null,
+  financeReport: null,
 };
 
 /* ------------------------------------------------------------------ */
@@ -79,6 +81,7 @@ function newGame() {
   state.lastMove = null;
   state.lastReview = null;
   state.developmentReport = null;
+  state.financeReport = null;
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
@@ -125,6 +128,7 @@ function save() {
       lastMove: state.lastMove,
       inbox: state.inbox,
       developmentReport: state.developmentReport,
+      financeReport: state.financeReport,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -157,6 +161,7 @@ function load() {
     state.lastMove = data.lastMove ?? null;
     state.inbox = data.inbox ?? [];
     state.developmentReport = data.developmentReport ?? null;
+    state.financeReport = data.financeReport ?? null;
     // Safety: if an objective is missing (older-but-compatible save), set one.
     if (!state.objective) {
       const uc = clubsById[data.userClubId];
@@ -888,15 +893,25 @@ function attributeMini(label, value) {
 /* ---------- Finance ---------- */
 function renderFinance() {
   const club = userClub();
-  const rev = seasonRevenue(club);
-  const cost = seasonCosts(club);
   const health = financialHealth(club);
-  const projected = rev.total - cost.total;
+  const forecast = financeForecast(club);
+  const rev = forecast.revenue;
+  const cost = forecast.costs;
+  const projected = forecast.profit;
+  const tickets = ticketPricePlan(club);
 
   document.getElementById('finance').innerHTML = `
     <div class="card">
-      <h2>Balance</h2>
-      <p class="scoreline success">£${fmt(club.cash)}</p>
+      <div class="flex-between">
+        <h2 class="mb0">Finance Control</h2>
+        <span class="${bandClass(forecast.risk)} small">${forecast.label}</span>
+      </div>
+      <p class="scoreline ${club.cash >= 0 ? 'success' : 'danger'}">£${fmt(club.cash)}</p>
+      <div class="stat-row">
+        <div class="stat"><strong>Transfer Budget</strong><span>£${fmt(forecast.transferBudget)}</span></div>
+        <div class="stat"><strong>Weekly Wage Room</strong><span class="${forecast.remainingWeeklyWage >= 0 ? 'success' : 'danger'}">£${fmt(forecast.remainingWeeklyWage)}</span></div>
+        <div class="stat"><strong>Cash Runway</strong><span>${formatRunway(forecast.runway)}</span></div>
+      </div>
       <p class="center small ${bandClass(health.band)}">${health.label} · ${health.advice}</p>
     </div>
     <div class="grid">
@@ -923,56 +938,106 @@ function renderFinance() {
       <h3>Projected Profit / Loss</h3>
       <p class="scoreline ${projected >= 0 ? 'success' : 'danger'}">${projected >= 0 ? '+' : '−'}£${fmt(Math.abs(projected))}</p>
       <div class="attr-bar"><span class="val small">Wage</span><div class="bar"><div class="bar-fill ${health.band === 'danger' ? '' : 'green'}" style="width:${Math.min(100, health.ratio * 100)}%;background:${health.band === 'danger' ? 'var(--danger)' : health.band === 'warning' ? 'var(--warning)' : 'var(--accent-2)'}"></div></div><span class="val">${(health.ratio * 100).toFixed(0)}%</span></div>
-      <p class="muted small mt">Wage-to-revenue ratio. Under 80% is comfortable; the game never bankrupts you for a single bad season.</p>
-    </div>`;
+      <p class="muted small mt">Wage-to-revenue ratio. Budget target is £${fmt(forecast.weeklyWageBudget)}/wk; under 80% of revenue is comfortable.</p>
+    </div>
+    <div class="card">
+      <h3>Ticket Price Demand</h3>
+      <p class="muted small">Ticket changes now affect attendance. Higher prices can help, but only if local demand supports them.</p>
+      <div class="ticket-grid mt">
+        ${tickets.map(t => `<div class="ticket-card ${t.current ? 'active' : ''}">
+          <span>£${t.price}</span>
+          <strong>${fmt(t.attendance)}</strong>
+          <small>£${fmt(t.seasonMatchday)} season matchday</small>
+        </div>`).join('')}
+      </div>
+    </div>
+    ${renderLastFinanceReport()}`;
+}
+
+function renderLastFinanceReport() {
+  const report = state.financeReport;
+  if (!report) return '';
+  return `<div class="card">
+    <div class="flex-between">
+      <h3 class="mb0">Last Season Finance Report</h3>
+      <span class="muted small">Season ${report.season}</span>
+    </div>
+    <p class="muted small mt">${report.summary}</p>
+    <table><tbody>
+      <tr><td>Revenue</td><td class="num">£${fmt(report.revenue)}</td></tr>
+      <tr><td>Costs</td><td class="num">£${fmt(report.costs)}</td></tr>
+      <tr><td>Profit / Loss</td><td class="num ${report.profit >= 0 ? 'success' : 'danger'}">${report.profit >= 0 ? '+' : '−'}£${fmt(Math.abs(report.profit))}</td></tr>
+    </tbody></table>
+  </div>`;
 }
 
 /* ---------- Stadium & Infrastructure ---------- */
 function renderStadium() {
   const club = userClub();
-  const expandCost = Math.round(club.stadiumCapacity * 350);
-  const academyCost = club.academy * 200_000;
-  const trainingCost = club.training * 200_000;
+  const expansion = stadiumExpansionPlan(club);
+  const academyPlan = infrastructureUpgradePlan(club, 'academy');
+  const trainingPlan = infrastructureUpgradePlan(club, 'training');
+  const tickets = ticketPricePlan(club);
 
   document.getElementById('stadium').innerHTML = `
     <div class="card">
-      <h2>Stadium</h2>
-      <p>Capacity: <strong>${fmt(club.stadiumCapacity)}</strong> · Ticket £${club.ticketPrice}</p>
-      <div class="form-row mt">
-        <button class="btn" id="expand" ${club.cash < expandCost ? 'disabled' : ''}>Expand +2,000 seats (£${fmt(expandCost)})</button>
+      <div class="flex-between">
+        <h2 class="mb0">Stadium</h2>
+        <span class="muted small">${fmt(club.stadiumCapacity)} capacity</span>
       </div>
+      <div class="grid mt">
+        <div class="mini-panel"><span class="muted small">Expansion cost</span><strong>£${fmt(expansion.cost)}</strong></div>
+        <div class="mini-panel"><span class="muted small">Annual matchday gain</span><strong class="${expansion.annualGain > 0 ? 'success' : 'warning'}">£${fmt(expansion.annualGain)}</strong></div>
+        <div class="mini-panel"><span class="muted small">ROI</span><strong>${expansion.label}</strong></div>
+      </div>
+      <button class="btn mt" id="expand" ${club.cash < expansion.cost ? 'disabled' : ''}>Expand +${fmt(expansion.seats)} seats</button>
       <div class="form-row">
         <label>Ticket price</label>
         <input type="number" id="ticket" value="${club.ticketPrice}" min="5" max="80" style="width:90px" />
         <button class="btn-ghost btn-sm" id="setTicket">Set</button>
       </div>
-      <p class="muted small">Higher prices raise revenue per fan but real games would model attendance drop-off. Kept simple and fair here.</p>
+      <div class="ticket-grid mt">
+        ${tickets.map(t => `<div class="ticket-card ${t.current ? 'active' : ''}">
+          <span>£${t.price}</span>
+          <strong>${fmt(t.attendance)}</strong>
+          <small>£${fmt(t.seasonMatchday)} season matchday</small>
+        </div>`).join('')}
+      </div>
+      <p class="muted small mt">Attendance now reacts to price, results, reputation, and capacity.</p>
     </div>
     <div class="grid">
       <div class="card mb0">
         <h3>Youth Academy · Level ${club.academy}</h3>
-        <p class="muted small">Produces 1 youth prospect each season, or 2 from level 4. Higher levels improve starting OVR and potential.</p>
-        <button class="btn btn-sm" id="upAcademy" ${club.academy >= 5 || club.cash < academyCost ? 'disabled' : ''}>Upgrade (£${fmt(academyCost)})</button>
+        <p class="muted small">${academyPlan.impact}</p>
+        <p class="small">Cost: <strong>£${fmt(academyPlan.cost)}</strong> · Annual upkeep +£${fmt(academyPlan.annualCostIncrease)}</p>
+        <button class="btn btn-sm" id="upAcademy" ${academyPlan.maxed || club.cash < academyPlan.cost ? 'disabled' : ''}>Upgrade to level ${academyPlan.nextLevel}</button>
       </div>
       <div class="card mb0">
         <h3>Training · Level ${club.training}</h3>
-        <p class="muted small">Improves end-of-season growth and softens decline for older players.</p>
-        <button class="btn btn-sm" id="upTraining" ${club.training >= 5 || club.cash < trainingCost ? 'disabled' : ''}>Upgrade (£${fmt(trainingCost)})</button>
+        <p class="muted small">${trainingPlan.impact}</p>
+        <p class="small">Cost: <strong>£${fmt(trainingPlan.cost)}</strong> · Annual upkeep +£${fmt(trainingPlan.annualCostIncrease)}</p>
+        <button class="btn btn-sm" id="upTraining" ${trainingPlan.maxed || club.cash < trainingPlan.cost ? 'disabled' : ''}>Upgrade to level ${trainingPlan.nextLevel}</button>
       </div>
     </div>`;
 
   document.getElementById('expand').addEventListener('click', () => {
-    club.cash -= expandCost; club.stadiumCapacity += 2000; render();
+    club.cash -= expansion.cost; club.stadiumCapacity += expansion.seats;
+    addInbox('Stadium expanded', `Capacity increased by ${fmt(expansion.seats)} seats. Forecast annual matchday gain: £${fmt(expansion.annualGain)}.`, 'finance');
+    render();
   });
   document.getElementById('setTicket').addEventListener('click', () => {
     const v = parseInt(document.getElementById('ticket').value, 10);
     if (v >= 5 && v <= 80) { club.ticketPrice = v; render(); }
   });
   document.getElementById('upAcademy').addEventListener('click', () => {
-    club.cash -= academyCost; club.academy++; render();
+    club.cash -= academyPlan.cost; club.academy++;
+    addInbox('Academy upgraded', `Academy is now level ${club.academy}. ${academyPlan.impact}`, 'development');
+    render();
   });
   document.getElementById('upTraining').addEventListener('click', () => {
-    club.cash -= trainingCost; club.training++; render();
+    club.cash -= trainingPlan.cost; club.training++;
+    addInbox('Training upgraded', `Training is now level ${club.training}. ${trainingPlan.impact}`, 'development');
+    render();
   });
 }
 
@@ -1103,6 +1168,15 @@ function onNewSeason() {
   let bonus = 0;
   if (grading.grade === 'exceeded') { bonus = Math.round(pnl.revenue.total * 0.10); uc.cash += bonus; }
   else if (grading.grade === 'badly') { bonus = -Math.round(pnl.revenue.total * 0.05); uc.cash += bonus; }
+  state.financeReport = {
+    season: state.season,
+    revenue: pnl.revenue.total,
+    costs: pnl.costs.total,
+    profit: pnl.profit + bonus,
+    balance: uc.cash,
+    bonus,
+    summary: `Revenue £${fmt(pnl.revenue.total)}, costs £${fmt(pnl.costs.total)}, net ${pnl.profit + bonus >= 0 ? '+' : '−'}£${fmt(Math.abs(pnl.profit + bonus))}. Balance now £${fmt(uc.cash)}.`,
+  };
 
   // 3b. If the board sacked the manager, end the game cleanly here.
   if (review.sacked) {
@@ -1161,6 +1235,7 @@ function onNewSeason() {
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
   addInbox('Season review complete', `${grading.message} ${review.jobMessage} Balance now £${fmt(uc.cash)}.`, 'board');
+  addInbox('Finance report', state.financeReport.summary, 'finance');
   addInbox('Player development report', state.developmentReport.summary.text, 'development');
   addInbox('New objective set', `${state.objective.label}: ${state.objective.reason}`, 'board');
   addInbox('Finance forecast refreshed', state.financeObjective.detail, 'finance');
@@ -1209,6 +1284,10 @@ function onNewSeason() {
 function fmt(n) { return Math.round(n).toLocaleString('en-GB'); }
 function pct(n) { return Math.round(n * 100); }
 function signed(n) { return n > 0 ? `+${n}` : `${n}`; }
+function formatRunway(runway) {
+  if (!Number.isFinite(runway)) return 'Safe';
+  return `${runway.toFixed(1)} yrs`;
+}
 function ord(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return s[(v - 20) % 10] || s[v] || s[0]; }
 function avgOverall(club) {
   if (!club.players.length) return 0;

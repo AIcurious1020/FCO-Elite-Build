@@ -330,6 +330,33 @@ tbody tr:hover td { background: rgba(255,255,255,.03); }
   margin-top: 16px;
 }
 
+/* ---------- Finance & infrastructure ---------- */
+.ticket-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.ticket-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+.ticket-card.active { border-color: var(--accent); }
+.ticket-card span,
+.ticket-card small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.ticket-card strong {
+  display: block;
+  font-size: 20px;
+  margin: 3px 0;
+}
+
 /* ---------- Utilities ---------- */
 .muted { color: var(--muted); }
 .danger { color: var(--danger); }
@@ -434,7 +461,8 @@ select, input {
   .prob-grid { grid-template-columns: 1fr; }
   .inbox-title-row { align-items: flex-start; }
   .need-grid,
-  .transfer-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .transfer-detail-grid,
+  .ticket-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .modal-actions { justify-content: stretch; }
   .modal-actions .btn,
   .modal-actions .btn-ghost { flex: 1; }
