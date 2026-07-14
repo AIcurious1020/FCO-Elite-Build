@@ -33,6 +33,7 @@ import {
   matchStory, divisionStory, transferMarketStory, transferCompletedStory,
   infrastructureStory, seasonReviewStories, objectiveStory, injuryStory,
   cupStory, cupRoundStory, cupDrawStory, rivalTransferStory, clubsToWatchStory,
+  managerAppointmentStory, managerDirectiveStory,
 } from './news.js';
 import {
   processWeeklyInjuries, injuredPlayers, availabilityByPosition, missingStarters,
@@ -40,6 +41,10 @@ import {
 import {
   createCup, cupCurrentRound, cupStatus, playCupRound, cupRoundFixture,
 } from './cup.js';
+import {
+  availableManagersForClub, applyManagerTactics, CHAIRMAN_DIRECTIVES,
+  MANAGER_STYLES, managerCompensation, managerFit, managerStatus,
+} from './manager.js';
 
 // v3 save schema (multi-division + board objectives). Older saves are
 // incompatible, so they are simply ignored and a fresh pyramid game starts.
@@ -72,6 +77,7 @@ const state = {
   currentEvent: 0,
   resultMemory: [],
   worldActivity: [],
+  managerMarket: [],
 };
 
 /* ------------------------------------------------------------------ */
@@ -114,6 +120,7 @@ function newGame(userClubId = 'solihull') {
   state.currentEvent = 0;
   state.resultMemory = [];
   state.worldActivity = [];
+  state.managerMarket = availableManagersForClub(uc, state.season);
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
@@ -174,6 +181,17 @@ function careerDifficultyText(club, avg) {
   if (club.cash <= 300_000 || avg <= 43) return 'Hard build: limited funds and a squad that needs careful development.';
   if (club.cash >= 800_000 || avg >= 47) return 'Strong platform: more resources, but expectations will rise quickly.';
   return 'Balanced project: enough stability to plan, still plenty to improve.';
+}
+
+function ensureClubManagers(clubs, season = state.season || 1) {
+  clubs.forEach((club, i) => {
+    if (!club.manager) {
+      club.manager = availableManagersForClub(club, season, 1)[0];
+      club.manager.id = `mgr-${club.id}-retro-${i}`;
+    }
+    club.manager.directive = club.manager.directive || 'trust';
+    applyManagerTactics(club);
+  });
 }
 
 function userClub() {
@@ -413,6 +431,7 @@ function save() {
       currentEvent: state.currentEvent,
       resultMemory: state.resultMemory,
       worldActivity: state.worldActivity,
+      managerMarket: state.managerMarket,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -430,6 +449,7 @@ function load() {
     state.fixtures = data.fixtures;
     state.currentWeek = data.currentWeek;
     state.season = data.season;
+    ensureClubManagers(clubs, state.season || 1);
     state.market = (data.market || []).map(p => Object.assign(new Player(p), p));
     state.transferFilters = data.transferFilters ?? { position: 'ALL', affordableOnly: false };
     state.lastResults = (data.lastResults || []).map(r => ({
@@ -452,8 +472,10 @@ function load() {
     state.seasonCalendar = data.seasonCalendar ?? buildSeasonCalendar(state.fixtures, state.cup, state.season);
     state.resultMemory = data.resultMemory ?? [];
     state.worldActivity = data.worldActivity ?? [];
+    state.managerMarket = data.managerMarket ?? availableManagersForClub(clubsById[data.userClubId], data.season || 1);
     syncSeasonCalendar();
     state.currentEvent = nextCalendarIndex();
+    if (state.currentTab === 'tactics') state.currentTab = 'manager';
     // Safety: if an objective is missing (older-but-compatible save), set one.
     if (!state.objective) {
       const uc = clubsById[data.userClubId];
@@ -473,6 +495,7 @@ function serialiseClub(c) {
     reputation: c.reputation, cash: c.cash, baseCommercial: c.baseCommercial,
     ticketPrice: c.ticketPrice, stadiumCapacity: c.stadiumCapacity,
     isUser: c.isUser, tactics: c.tactics, academy: c.academy, training: c.training,
+    manager: c.manager,
     played: c.played, won: c.won, drawn: c.drawn, lost: c.lost,
     gf: c.gf, ga: c.ga, points: c.points,
     players: c.players.map(serialisePlayer),
@@ -504,6 +527,8 @@ function deserialiseClub(d) {
   club.tactics = d.tactics || club.tactics;
   club.academy = d.academy ?? 1;
   club.training = d.training ?? 1;
+  club.manager = d.manager || null;
+  if (club.manager) applyManagerTactics(club);
   Object.assign(club, {
     played: d.played, won: d.won, drawn: d.drawn, lost: d.lost,
     gf: d.gf, ga: d.ga, points: d.points,
@@ -569,7 +594,7 @@ function render() {
     news: renderNews,
     club: renderClubProfile,
     squad: renderSquad,
-    tactics: renderTactics,
+    manager: renderManager,
     fixtures: renderFixtures,
     cup: renderCup,
     table: renderTable,
@@ -673,6 +698,11 @@ function renderDashboard() {
         <h3>Squad</h3>
         <p><strong>${club.players.length}</strong> players · Avg overall <strong>${avgOverall(club)}</strong></p>
         <p class="muted small">Best XI rating: ${Math.round((teamRatings(club).attack + teamRatings(club).defense) / 2)}</p>
+      </div>
+      <div class="card mb0">
+        <h3>Head Coach</h3>
+        <p><strong>${club.manager?.name || 'Interim staff'}</strong></p>
+        <p class="muted small">${MANAGER_STYLES[club.manager?.style]?.label || 'Balanced'} · Fit ${managerFit(club.manager, club)}/100</p>
       </div>
       <div class="card mb0">
         <h3>Finance</h3>
@@ -983,6 +1013,7 @@ function previewFactors(club, opponent, userRatings, oppRatings, isHome) {
   const avgGap = avgOverall(club) - avgOverall(opponent);
 
   factors.push(`${isHome ? `Home advantage adds +${HOME_BONUS} to attack and defence.` : 'Away match: no home bonus applied.'}`);
+  factors.push(`${club.manager?.name || 'The head coach'}'s ${MANAGER_STYLES[club.manager?.style]?.label || 'balanced'} style sets the match approach.`);
   factors.push(attEdge >= 0
     ? `Your attack has a ${attEdge > 0 ? '+' : ''}${attEdge} edge against their defence.`
     : `Their defence has a ${Math.abs(attEdge)} point edge over your attack.`);
@@ -1228,48 +1259,109 @@ function renderSquadDevelopmentReport() {
   </div>`;
 }
 
-/* ---------- Tactics ---------- */
-function renderTactics() {
+/* ---------- Manager ---------- */
+function renderManager() {
   const club = userClub();
+  if (!club.manager) {
+    club.manager = availableManagersForClub(club, state.season, 1)[0];
+  }
+  applyManagerTactics(club);
+  const manager = club.manager;
+  const status = managerStatus(manager, club);
+  const style = MANAGER_STYLES[manager.style] || MANAGER_STYLES.balanced;
+  const directive = CHAIRMAN_DIRECTIVES[manager.directive || 'trust'];
   const r = teamRatings(club);
-  document.getElementById('tactics').innerHTML = `
+  const candidates = state.managerMarket.length ? state.managerMarket : availableManagersForClub(club, state.season);
+  state.managerMarket = candidates;
+
+  document.getElementById('manager').innerHTML = `
     <div class="card">
-      <h2>Tactics</h2>
-      <p class="muted small">Changes are transparent: mentality and pressing directly scale your attack and defence ratings shown below.</p>
+      <div class="flex-between">
+        <div>
+          <h2 class="mb0">Head Coach</h2>
+          <p class="muted small">As chairman, you set direction. The manager turns that into the tactical plan.</p>
+        </div>
+        <span class="pill obj-${status.band === 'safe' ? 'ontrack' : status.band === 'warning' ? 'close' : status.band === 'danger' ? 'offtrack' : 'pending'}">${status.label}</span>
+      </div>
+      <div class="grid mt">
+        <div class="mini-panel"><span class="muted small">Manager</span><strong>${manager.name}</strong></div>
+        <div class="mini-panel"><span class="muted small">Style</span><strong>${style.label}</strong></div>
+        <div class="mini-panel"><span class="muted small">Rating</span><strong>${manager.rating}/100</strong></div>
+        <div class="mini-panel"><span class="muted small">Confidence</span><strong>${manager.confidence ?? 60}/100</strong></div>
+        <div class="mini-panel"><span class="muted small">Contract</span><strong>${manager.contractYears} yrs · £${fmt(manager.wage)}/wk</strong></div>
+      </div>
+      <p class="muted mt">${style.text}</p>
+      <p class="small ${bandClass(status.band)}">${status.text} Fit score: ${managerFit(manager, club)}/100.</p>
       <div class="form-row">
-        <label>Mentality</label>
-        <select id="mentality">
-          ${opt('defensive', club.tactics.mentality)}
-          ${opt('balanced', club.tactics.mentality)}
-          ${opt('attacking', club.tactics.mentality)}
+        <label>Chairman instruction</label>
+        <select id="managerDirective">
+          ${Object.entries(CHAIRMAN_DIRECTIVES).map(([key, value]) => `<option value="${key}" ${key === (manager.directive || 'trust') ? 'selected' : ''}>${value.label}</option>`).join('')}
         </select>
       </div>
-      <div class="form-row">
-        <label>Pressing</label>
-        <select id="pressing">
-          ${opt('low', club.tactics.pressing)}
-          ${opt('medium', club.tactics.pressing)}
-          ${opt('high', club.tactics.pressing)}
-        </select>
-      </div>
+      <p class="muted small">${directive.text}</p>
     </div>
     <div class="card">
-      <h2>Current Best XI Ratings</h2>
+      <h2>Manager Tactical Output</h2>
+      <p class="muted small">This is not direct touchline control. It shows how the manager and chairman instruction translate into the transparent match ratings.</p>
+      <div class="grid mt">
+        <div class="mini-panel"><span class="muted small">Mentality</span><strong>${labelText(club.tactics.mentality)}</strong></div>
+        <div class="mini-panel"><span class="muted small">Pressing</span><strong>${labelText(club.tactics.pressing)}</strong></div>
+      </div>
       <div class="attr-bar"><span class="val">ATT</span><div class="bar"><div class="bar-fill blue" style="width:${Math.min(100, r.attack)}%"></div></div><span class="val">${Math.round(r.attack)}</span></div>
       <div class="attr-bar mt"><span class="val">DEF</span><div class="bar"><div class="bar-fill green" style="width:${Math.min(100, r.defense)}%"></div></div><span class="val">${Math.round(r.defense)}</span></div>
+    </div>
+    <div class="card">
+      <div class="flex-between">
+        <h2 class="mb0">Available Managers</h2>
+        <button class="btn-ghost btn-sm" id="refreshManagers">Refresh shortlist</button>
+      </div>
+      <p class="muted small mt">Hiring a new head coach replaces the current manager and pays the listed compensation package.</p>
+      <table class="mt">
+        <thead><tr><th>Name</th><th>Style</th><th class="num">Rating</th><th class="num">Fit</th><th class="num">Cost</th><th></th></tr></thead>
+        <tbody>${candidates.map(candidate => `
+          <tr>
+            <td>${candidate.name}<br><span class="muted small">${candidate.age} · ${candidate.personality}</span></td>
+            <td>${MANAGER_STYLES[candidate.style]?.label || 'Balanced'}</td>
+            <td class="num">${candidate.rating}</td>
+            <td class="num">${managerFit(candidate, club)}</td>
+            <td class="num">£${fmt(managerCompensation(candidate, club))}</td>
+            <td><button class="btn btn-sm" data-hire-manager="${candidate.id}" ${club.cash < managerCompensation(candidate, club) ? 'disabled' : ''}>Hire</button></td>
+          </tr>`).join('')}</tbody>
+      </table>
     </div>`;
 
-  document.getElementById('mentality').addEventListener('change', e => {
-    club.tactics.mentality = e.target.value; render();
+  document.getElementById('managerDirective').addEventListener('change', e => {
+    manager.directive = e.target.value;
+    applyManagerTactics(club);
+    addStory(managerDirectiveStory(club, manager));
+    render();
   });
-  document.getElementById('pressing').addEventListener('change', e => {
-    club.tactics.pressing = e.target.value; render();
+  document.getElementById('refreshManagers').addEventListener('click', () => {
+    state.managerMarket = availableManagersForClub(club, state.season);
+    render();
+  });
+  document.querySelectorAll('[data-hire-manager]').forEach(btn => {
+    btn.addEventListener('click', () => hireManager(btn.dataset.hireManager));
   });
 }
 
-function opt(v, sel) {
-  const label = v.charAt(0).toUpperCase() + v.slice(1);
-  return `<option value="${v}" ${v === sel ? 'selected' : ''}>${label}</option>`;
+function hireManager(id) {
+  const club = userClub();
+  const candidate = state.managerMarket.find(m => m.id === id);
+  if (!candidate) return;
+  const cost = managerCompensation(candidate, club);
+  if (club.cash < cost) { alert('You cannot afford the compensation package.'); return; }
+  if (!confirm(`Hire ${candidate.name} for £${fmt(cost)} compensation?`)) return;
+  club.cash -= cost;
+  club.manager = { ...candidate, confidence: 60, directive: 'trust' };
+  applyManagerTactics(club);
+  state.managerMarket = availableManagersForClub(club, state.season);
+  addStory(managerAppointmentStory(club, club.manager, cost));
+  render();
+}
+
+function labelText(value) {
+  return String(value || '').replace('_', ' ').replace(/^\w/, c => c.toUpperCase());
 }
 
 /* ---------- Fixtures ---------- */
@@ -1922,6 +2014,8 @@ function updateFormAndMorale(results) {
     const homeWin = r.result === 'H', awayWin = r.result === 'A';
     for (const p of r.home.players) driftPlayer(p, homeWin ? +1 : r.result === 'D' ? 0 : -1);
     for (const p of r.away.players) driftPlayer(p, awayWin ? +1 : r.result === 'D' ? 0 : -1);
+    driftManagerConfidence(r.home, homeWin ? +2 : r.result === 'D' ? 0 : -2);
+    driftManagerConfidence(r.away, awayWin ? +2 : r.result === 'D' ? 0 : -2);
   }
 }
 function driftPlayer(p, dir) {
@@ -1930,6 +2024,10 @@ function driftPlayer(p, dir) {
   p.morale = clampMult(p.morale + step * 0.6);
 }
 function clampMult(v) { return Math.max(0.85, Math.min(1.15, +v.toFixed(3))); }
+function driftManagerConfidence(club, delta) {
+  if (!club.manager) return;
+  club.manager.confidence = Math.max(20, Math.min(95, (club.manager.confidence ?? 60) + delta));
+}
 
 function onNewSeason() {
   if (state.cup?.status === 'active') {
@@ -2045,6 +2143,7 @@ function onNewSeason() {
   state.currentWeek = 0;
   state.season++;
   state.market = generateMarket(uc);
+  state.managerMarket = availableManagersForClub(uc, state.season);
   state.lastResults = [];
   state.cup = createCup(clubs, state.season);
   state.lastCupResults = [];

@@ -7,6 +7,7 @@
 
 import { Club } from './club.js';
 import { Player } from './player.js';
+import { createManagerForClub, applyManagerTactics } from './manager.js';
 
 const FIRST = ['A.', 'J.', 'M.', 'L.', 'R.', 'K.', 'D.', 'S.', 'T.', 'P.', 'C.', 'G.', 'B.', 'N.', 'O.', 'H.', 'W.', 'F.', 'E.', 'V.'];
 const LAST = ['Smith', 'Jones', 'Brown', 'Davis', 'Wilson', 'Taylor', 'Evans', 'Clarke', 'White', 'Harris', 'Martin', 'Lee', 'Scott', 'Adams', 'Walker', 'Hughes', 'Green', 'Baker', 'Cole', 'Reid', 'Fox', 'Shaw', 'Webb', 'Payne', 'Knight'];
@@ -100,8 +101,8 @@ const DEFS = [
 ];
 
 export function createLeague(userClubId = 'solihull') {
-  const clubs = DEFS.map(([id, name, short, div, rep, tier, cash, cap, ticket, comm], i) =>
-    new Club({
+  const clubs = DEFS.map(([id, name, short, div, rep, tier, cash, cap, ticket, comm], i) => {
+    const club = new Club({
       id, name, short,
       division: div,
       reputation: rep,
@@ -111,8 +112,11 @@ export function createLeague(userClubId = 'solihull') {
       stadiumCapacity: cap,
       players: makeSquad(1000 + i * 37, tier),
       isUser: id === userClubId,
-    })
-  );
+    });
+    club.manager = createManagerForClub(club, i + 1);
+    applyManagerTactics(club);
+    return club;
+  });
 
   const clubsById = {};
   clubs.forEach(c => { clubsById[c.id] = c; });

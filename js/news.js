@@ -243,6 +243,26 @@ export function clubsToWatchStory({ leader, chaser, pressureClub, userClub }) {
   };
 }
 
+export function managerAppointmentStory(club, manager, cost) {
+  return {
+    title: `${club.short} appoint ${manager.name}`,
+    body: `${manager.name} arrives as head coach on a ${manager.contractYears}-year deal. Compensation package: £${fmt(cost)}. Style: ${manager.style.replace('_', ' ')}.`,
+    type: 'board',
+    category: 'Manager',
+    importance: 2,
+  };
+}
+
+export function managerDirectiveStory(club, manager) {
+  return {
+    title: `${club.short} clarify manager brief`,
+    body: `${club.name} have asked ${manager.name} to follow the chairman's updated direction: ${manager.directive.replace('_', ' ')}.`,
+    type: 'board',
+    category: 'Manager',
+    importance: 1,
+  };
+}
+
 function fmt(n) {
   return Math.round(n).toLocaleString('en-GB');
 }

@@ -4,12 +4,13 @@
 // and (for the home side) a fixed home bonus.
 
 import { Player } from './player.js';
+import { managerTactics } from './manager.js';
 
 export class Club {
   constructor({
     id, name, short, division, reputation,
     cash, baseCommercial, ticketPrice,
-    stadiumCapacity, players = [], isUser = false
+    stadiumCapacity, players = [], isUser = false, manager = null
   }) {
     this.id = id;
     this.name = name;
@@ -22,8 +23,9 @@ export class Club {
     this.stadiumCapacity = stadiumCapacity;
     this.players = players.map(p => (p instanceof Player ? p : new Player(p)));
     this.isUser = isUser;
+    this.manager = manager;
 
-    // Tactics (see tactics tab). mentality shifts attack/defence emphasis.
+    // Head coach tactical plan. Mentality shifts attack/defence emphasis.
     this.tactics = { mentality: 'balanced', pressing: 'medium' };
 
     // Season record
@@ -89,8 +91,9 @@ const PRESSING = {
 // homeBonus is added to both once (default 0 for away side).
 export function teamRatings(club, homeBonus = 0) {
   const xi = club.bestEleven();
-  const m = MENTALITY[club.tactics.mentality] || MENTALITY.balanced;
-  const pr = PRESSING[club.tactics.pressing] || PRESSING.medium;
+  const plan = club.manager ? managerTactics(club.manager) : club.tactics;
+  const m = MENTALITY[plan.mentality] || MENTALITY.balanced;
+  const pr = PRESSING[plan.pressing] || PRESSING.medium;
 
   let att = 0, def = 0;
   for (const p of xi) {
