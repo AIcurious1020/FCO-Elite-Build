@@ -78,14 +78,18 @@ const state = {
 /* Bootstrap                                                          */
 /* ------------------------------------------------------------------ */
 function init() {
-  if (!load()) newGame();
   setupTabs();
   setupGlobalButtons();
-  render();
+  if (load()) {
+    setNavEnabled(true);
+    render();
+  } else {
+    showClubSelection();
+  }
 }
 
-function newGame() {
-  const lg = createLeague('solihull');
+function newGame(userClubId = 'solihull') {
+  const lg = createLeague(userClubId);
   state.league = lg;
   const uc = lg.clubsById[lg.userClubId];
   // Only the user's own division plays interactively; other divisions are
@@ -116,6 +120,60 @@ function newGame() {
   addStory(objectiveStory(state.objective));
   addStory({ title: 'Finance guardrail agreed', body: state.financeObjective.detail, type: 'finance', category: 'Finance', importance: 1 });
   addStory(transferMarketStory(state.market, uc));
+}
+
+function showClubSelection() {
+  const previewLeague = createLeague(null);
+  const candidates = clubsInDivision(previewLeague.clubs, BOTTOM_DIVISION);
+  state.league = null;
+  state.currentTab = 'dashboard';
+  setNavEnabled(false);
+  document.querySelectorAll('.tab-content').forEach(s => { s.hidden = s.id !== 'dashboard'; });
+  document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'dashboard'));
+  document.getElementById('headerClubName').textContent = 'Choose your club';
+  document.getElementById('headerCash').textContent = 'New career';
+  document.getElementById('dashboard').innerHTML = `
+    <div class="card">
+      <h2>Start New Career</h2>
+      <p class="muted small">Choose a National League club to build from the lower tiers into a global force. Every option starts with different cash, reputation, stadium size, and squad strength.</p>
+    </div>
+    <div class="club-select-grid">
+      ${candidates.map(club => renderClubChoice(club)).join('')}
+    </div>`;
+
+  document.querySelectorAll('[data-start-club]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      newGame(btn.dataset.startClub);
+      setNavEnabled(true);
+      switchTab('dashboard');
+    });
+  });
+}
+
+function renderClubChoice(club) {
+  const avg = avgOverall(club);
+  return `<article class="card club-choice">
+    <div class="flex-between">
+      <div>
+        <h2 class="mb0">${club.name}</h2>
+        <p class="muted small">${DIVISIONS[club.division].name} · Reputation ${club.reputation}/10</p>
+      </div>
+      <span class="pill obj-${club.reputation <= 1 ? 'pending' : 'close'}">${club.short}</span>
+    </div>
+    <div class="stat-row mt">
+      <div class="stat"><strong>Cash</strong><span>£${fmt(club.cash)}</span></div>
+      <div class="stat"><strong>Stadium</strong><span>${fmt(club.stadiumCapacity)}</span></div>
+      <div class="stat"><strong>Squad Avg</strong><span>${avg}</span></div>
+    </div>
+    <p class="muted small mt">${careerDifficultyText(club, avg)}</p>
+    <button class="btn btn-lg mt" data-start-club="${club.id}">Start with ${club.short}</button>
+  </article>`;
+}
+
+function careerDifficultyText(club, avg) {
+  if (club.cash <= 300_000 || avg <= 43) return 'Hard build: limited funds and a squad that needs careful development.';
+  if (club.cash >= 800_000 || avg >= 47) return 'Strong platform: more resources, but expectations will rise quickly.';
+  return 'Balanced project: enough stability to plan, still plenty to improve.';
 }
 
 function userClub() {
@@ -465,17 +523,23 @@ function setupTabs() {
 }
 
 function switchTab(tab) {
+  if (!state.league) return;
   state.currentTab = tab;
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   render();
+}
+
+function setNavEnabled(enabled) {
+  document.querySelectorAll('[data-tab]').forEach(btn => {
+    btn.disabled = !enabled && btn.dataset.tab !== 'dashboard';
+  });
 }
 
 function setupGlobalButtons() {
   document.getElementById('resetGame').addEventListener('click', () => {
     if (confirm('Reset the game? This deletes your current save.')) {
       localStorage.removeItem(SAVE_KEY);
-      newGame();
-      render();
+      showClubSelection();
     }
   });
   document.getElementById('closeMatchModal').addEventListener('click', () => {
@@ -490,6 +554,10 @@ function setupGlobalButtons() {
 /* Rendering                                                          */
 /* ------------------------------------------------------------------ */
 function render() {
+  if (!state.league) {
+    showClubSelection();
+    return;
+  }
   const club = userClub();
   document.getElementById('headerClubName').textContent = club.name;
   document.getElementById('headerCash').textContent = '£' + fmt(club.cash);
@@ -1924,7 +1992,8 @@ function onNewSeason() {
     );
     if (confirm('Start a new game with a fresh club?')) {
       localStorage.removeItem(SAVE_KEY);
-      newGame();
+      showClubSelection();
+      return;
     }
     state.currentTab = 'dashboard';
     document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'dashboard'));

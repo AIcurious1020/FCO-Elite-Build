@@ -2,7 +2,7 @@
 // Seed pyramid: 24 clubs across 3 divisions (8 per division).
 //   division 1 = top tier (hardest, richest)
 //   division 2 = middle tier
-//   division 3 = bottom tier — where the user (Solihull FC) starts.
+//   division 3 = National League — selectable starting clubs.
 // Squad strength is tiered by division so the climb genuinely gets harder.
 
 import { Club } from './club.js';
@@ -68,7 +68,7 @@ function makeSquad(seed, tier, size = 18) {
 // Club definition: [id, name, short, division, reputation, tier, cash, capacity, ticket, commercial]
 // Tiers ascend with division quality: D3 ~40–48, D2 ~50–60, D1 ~62–74.
 const DEFS = [
-  // ---- Division 3 (bottom tier) — the user starts here ----
+  // ---- National League (bottom tier) — selectable career starts ----
   ['solihull',  'Solihull FC',       'SOL', 3, 1, 40,   250_000,  3_000, 18,  120_000],
   ['grimsby',   'Grimsby Athletic',  'GRM', 3, 2, 44,   600_000,  6_000, 20,  260_000],
   ['barnet',    'Barnet Rangers',    'BNT', 3, 2, 46,   900_000,  7_500, 22,  400_000],
@@ -124,7 +124,7 @@ export function createLeague(userClubId = 'solihull') {
 export const DIVISIONS = {
   1: { name: 'Premier Division', short: 'Div 1' },
   2: { name: 'Championship',     short: 'Div 2' },
-  3: { name: 'League Two',       short: 'Div 3' },
+  3: { name: 'National League',  short: 'NL' },
 };
 export const TOP_DIVISION = 1;
 export const BOTTOM_DIVISION = 3;

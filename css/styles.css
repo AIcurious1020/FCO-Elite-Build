@@ -83,6 +83,10 @@ body {
   border-bottom-color: var(--accent);
   font-weight: 600;
 }
+.top-nav button:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
 
 /* ---------- Layout ---------- */
 .main {
@@ -115,6 +119,19 @@ body {
 }
 
 .card h3 { margin: 0 0 10px; font-size: 14px; color: var(--muted); font-weight: 600; }
+
+.club-select-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+.club-choice {
+  display: flex;
+  flex-direction: column;
+}
+.club-choice .btn {
+  margin-top: auto;
+}
 
 /* ---------- Stats ---------- */
 .stat-row { display: flex; flex-wrap: wrap; gap: 10px; }
