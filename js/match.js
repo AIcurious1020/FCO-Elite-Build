@@ -19,6 +19,37 @@ export function expectedGoals(attack, oppDefense) {
   return Math.max(0.15, BASE_XG * Math.exp(SPREAD * edge));
 }
 
+// Probability of scoring k goals from an xG value. Exported so the UI can show
+// pre-match win/draw/loss odds using the same model as the actual result.
+export function poissonProbability(lambda, k) {
+  let factorial = 1;
+  for (let i = 2; i <= k; i++) factorial *= i;
+  return (Math.exp(-lambda) * Math.pow(lambda, k)) / factorial;
+}
+
+export function outcomeProbabilities(homeRatings, awayRatings, maxGoals = 8) {
+  const homeXg = expectedGoals(homeRatings.attack, awayRatings.defense);
+  const awayXg = expectedGoals(awayRatings.attack, homeRatings.defense);
+  let homeWin = 0, draw = 0, awayWin = 0;
+
+  for (let h = 0; h <= maxGoals; h++) {
+    for (let a = 0; a <= maxGoals; a++) {
+      const p = poissonProbability(homeXg, h) * poissonProbability(awayXg, a);
+      if (h > a) homeWin += p;
+      else if (h < a) awayWin += p;
+      else draw += p;
+    }
+  }
+
+  const total = homeWin + draw + awayWin;
+  return {
+    homeWin: +(homeWin / total).toFixed(4),
+    draw: +(draw / total).toFixed(4),
+    awayWin: +(awayWin / total).toFixed(4),
+    xg: { home: +homeXg.toFixed(2), away: +awayXg.toFixed(2) },
+  };
+}
+
 // Draw a goal count from a Poisson distribution with mean lambda.
 // This is the ONLY randomness, and it is unbiased: no memory, no streaks.
 function poisson(lambda, rng) {

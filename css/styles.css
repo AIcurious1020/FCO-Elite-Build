@@ -192,6 +192,80 @@ tbody tr:hover td { background: rgba(255,255,255,.03); }
 .attr-bar .bar { flex: 1; margin: 0; }
 .attr-bar .val { width: 26px; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; }
 
+/* ---------- Season hub & match preview ---------- */
+.inbox-list {
+  display: grid;
+  gap: 10px;
+}
+.inbox-item {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 10px;
+  align-items: start;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+.inbox-item p { margin: 3px 0 0; }
+.inbox-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 5px;
+  background: var(--muted);
+}
+.inbox-dot.board { background: var(--accent); }
+.inbox-dot.finance { background: var(--gold); }
+.inbox-dot.result-good { background: var(--accent-2); }
+.inbox-dot.result-neutral { background: var(--warning); }
+.inbox-dot.result-bad { background: var(--danger); }
+.inbox-title-row {
+  gap: 8px;
+  align-items: baseline;
+}
+.fixture-line { margin: 12px 0 0; }
+.prob-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.prob-cell {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+.prob-cell span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.prob-cell strong {
+  display: block;
+  font-size: 22px;
+  margin-top: 3px;
+}
+.mini-panel {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.mini-panel span,
+.mini-panel strong { display: block; }
+.mini-panel strong { margin-top: 3px; }
+.factor-list {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.factor-list li { margin: 4px 0; }
+.action-row { align-items: stretch; }
+
 /* ---------- Utilities ---------- */
 .muted { color: var(--muted); }
 .danger { color: var(--danger); }
@@ -293,4 +367,6 @@ select, input {
   .main { padding: 14px; }
   .stat span { font-size: 16px; }
   th, td { padding: 7px 5px; font-size: 12px; }
+  .prob-grid { grid-template-columns: 1fr; }
+  .inbox-title-row { align-items: flex-start; }
 }

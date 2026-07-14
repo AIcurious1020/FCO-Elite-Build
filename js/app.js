@@ -4,7 +4,7 @@
 import { createLeague, DIVISIONS, TOP_DIVISION, BOTTOM_DIVISION } from './data.js';
 import { Club, teamRatings } from './club.js';
 import { Player } from './player.js';
-import { simulateMatch, HOME_BONUS } from './match.js';
+import { simulateMatch, HOME_BONUS, outcomeProbabilities } from './match.js';
 import { generateFixtures, playMatchweek, recordResult, standings } from './league.js';
 import {
   seasonRevenue, seasonCosts, financialHealth, applySeasonFinances,
@@ -42,6 +42,7 @@ const state = {
   jobStatus: 'secure',    // secure | watch | at_risk | sacked
   lastReview: null,       // last end-of-season board review (for the dashboard)
   lastMove: null,         // 'promoted' | 'relegated' | null — how we arrived this season
+  inbox: [],              // season hub messages shown on the dashboard
 };
 
 /* ------------------------------------------------------------------ */
@@ -73,6 +74,9 @@ function newGame() {
   state.lastReview = null;
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
+  state.inbox = [];
+  addInbox('Board objective set', `${state.objective.label}: ${state.objective.reason}`, 'board');
+  addInbox('Financial guardrail', state.financeObjective.detail, 'finance');
 }
 
 function userClub() {
@@ -111,6 +115,7 @@ function save() {
       jobStatus: state.jobStatus,
       lastReview: state.lastReview,
       lastMove: state.lastMove,
+      inbox: state.inbox,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -140,10 +145,14 @@ function load() {
     state.jobStatus = data.jobStatus ?? 'secure';
     state.lastReview = data.lastReview ?? null;
     state.lastMove = data.lastMove ?? null;
+    state.inbox = data.inbox ?? [];
     // Safety: if an objective is missing (older-but-compatible save), set one.
     if (!state.objective) {
       const uc = clubsById[data.userClubId];
       state.objective = setLeagueObjective(uc, null, clubsInDivision(clubs, uc.division).length);
+    }
+    if (!state.inbox.length) {
+      addInbox('Save loaded', 'Your club is ready. Review the next match and board objective before advancing.', 'system');
     }
     return true;
   } catch (e) { return false; }
@@ -249,13 +258,7 @@ function renderDashboard() {
   const nextFixture = nextWeek
     ? nextWeek.matches.find(m => m.home === club.id || m.away === club.id)
     : null;
-  let nextHtml = '<p class="muted">Season complete — advance to start the next one.</p>';
-  if (nextFixture) {
-    const isHome = nextFixture.home === club.id;
-    const opp = state.league.clubsById[isHome ? nextFixture.away : nextFixture.home];
-    nextHtml = `<p><strong>${isHome ? club.name : opp.name}</strong> vs <strong>${isHome ? opp.name : club.name}</strong>
-      <span class="muted small">(${isHome ? 'Home' : 'Away'})</span></p>`;
-  }
+  const preview = nextFixture ? matchPreview(nextFixture) : null;
 
   document.getElementById('dashboard').innerHTML = `
     <div class="card">
@@ -295,9 +298,20 @@ function renderDashboard() {
     </div>
 
     <div class="card">
-      <h2>Next Match</h2>
-      ${nextHtml}
-      <div class="flex mt">
+      <div class="flex-between">
+        <h2 class="mb0">Season Hub</h2>
+        <span class="muted small">${state.inbox.length} updates</span>
+      </div>
+      ${renderInbox()}
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h2 class="mb0">Next Match Preview</h2>
+        ${preview ? `<span class="pill ${preview.userEdge >= 0 ? 'obj-ontrack' : 'obj-close'}">${preview.userEdge >= 0 ? 'Favourable' : 'Tough'}</span>` : ''}
+      </div>
+      ${preview ? renderMatchPreview(preview) : '<p class="muted">Season complete — advance to start the next one.</p>'}
+      <div class="flex mt action-row">
         <button class="btn btn-lg" id="playNext" ${!nextFixture ? 'disabled' : ''}>▶ Play Next Matchweek</button>
       </div>
       ${!nextFixture ? `<button class="btn btn-success btn-lg mt" id="newSeason">Start Season ${state.season + 1}</button>` : ''}
@@ -328,6 +342,104 @@ function renderDashboard() {
   if (playBtn) playBtn.addEventListener('click', onPlayNext);
   const ns = document.getElementById('newSeason');
   if (ns) ns.addEventListener('click', onNewSeason);
+}
+
+function renderInbox() {
+  const items = state.inbox.slice(0, 5);
+  if (!items.length) return '<p class="muted small mt">No updates yet. Play a matchweek to build the story of the season.</p>';
+  return `<div class="inbox-list mt">${items.map(item => `
+    <article class="inbox-item">
+      <div class="inbox-dot ${item.type}"></div>
+      <div>
+        <div class="flex-between inbox-title-row">
+          <strong>${item.title}</strong>
+          <span class="muted small">${item.meta}</span>
+        </div>
+        <p class="muted small">${item.body}</p>
+      </div>
+    </article>
+  `).join('')}</div>`;
+}
+
+function matchPreview(fx) {
+  const club = userClub();
+  const home = state.league.clubsById[fx.home];
+  const away = state.league.clubsById[fx.away];
+  const homeRatings = teamRatings(home, HOME_BONUS);
+  const awayRatings = teamRatings(away, 0);
+  const probs = outcomeProbabilities(homeRatings, awayRatings);
+  const isHome = home === club;
+  const userWin = isHome ? probs.homeWin : probs.awayWin;
+  const oppWin = isHome ? probs.awayWin : probs.homeWin;
+  const userRatings = isHome ? homeRatings : awayRatings;
+  const oppRatings = isHome ? awayRatings : homeRatings;
+  const opponent = isHome ? away : home;
+  const factors = previewFactors(club, opponent, userRatings, oppRatings, isHome);
+
+  return {
+    home, away, opponent, isHome,
+    ratings: { home: homeRatings, away: awayRatings, user: userRatings, opponent: oppRatings },
+    probs, userWin, oppWin, userEdge: userWin - oppWin,
+    factors,
+  };
+}
+
+function previewFactors(club, opponent, userRatings, oppRatings, isHome) {
+  const factors = [];
+  const attEdge = Math.round(userRatings.attack - oppRatings.defense);
+  const defEdge = Math.round(userRatings.defense - oppRatings.attack);
+  const avgGap = avgOverall(club) - avgOverall(opponent);
+
+  factors.push(`${isHome ? `Home advantage adds +${HOME_BONUS} to attack and defence.` : 'Away match: no home bonus applied.'}`);
+  factors.push(attEdge >= 0
+    ? `Your attack has a ${attEdge > 0 ? '+' : ''}${attEdge} edge against their defence.`
+    : `Their defence has a ${Math.abs(attEdge)} point edge over your attack.`);
+  factors.push(defEdge >= 0
+    ? `Your defence has a ${defEdge > 0 ? '+' : ''}${defEdge} edge against their attack.`
+    : `Their attack has a ${Math.abs(defEdge)} point edge over your defence.`);
+  factors.push(avgGap >= 0
+    ? `Squad average is ${avgGap} overall higher than ${opponent.short}.`
+    : `Squad average is ${Math.abs(avgGap)} overall lower than ${opponent.short}.`);
+
+  return factors;
+}
+
+function renderMatchPreview(preview) {
+  const userProb = pct(preview.userWin);
+  const drawProb = pct(preview.probs.draw);
+  const oppProb = pct(preview.oppWin);
+  const userXg = preview.isHome ? preview.probs.xg.home : preview.probs.xg.away;
+  const oppXg = preview.isHome ? preview.probs.xg.away : preview.probs.xg.home;
+
+  return `
+    <p class="fixture-line"><strong>${preview.home.name}</strong> vs <strong>${preview.away.name}</strong>
+      <span class="muted small">(${preview.isHome ? 'Home' : 'Away'} for you)</span></p>
+    <div class="prob-grid mt">
+      ${probCell('Your win', userProb, 'green')}
+      ${probCell('Draw', drawProb, 'gold')}
+      ${probCell(`${preview.opponent.short} win`, oppProb, 'red')}
+    </div>
+    <div class="grid mt">
+      <div class="mini-panel">
+        <span class="muted small">Expected goals</span>
+        <strong>${userXg} - ${oppXg}</strong>
+      </div>
+      <div class="mini-panel">
+        <span class="muted small">Ratings</span>
+        <strong>ATT ${Math.round(preview.ratings.user.attack)} / DEF ${Math.round(preview.ratings.user.defense)}</strong>
+      </div>
+    </div>
+    <ul class="factor-list">
+      ${preview.factors.map(f => `<li>${f}</li>`).join('')}
+    </ul>`;
+}
+
+function probCell(label, value, tone) {
+  return `<div class="prob-cell">
+    <span>${label}</span>
+    <strong class="${toneClass(tone)}">${value}%</strong>
+    <div class="bar"><div class="bar-fill ${tone === 'green' ? 'green' : tone === 'gold' ? 'gold' : ''}" style="width:${value}%;background:${tone === 'red' ? 'var(--danger)' : ''}"></div></div>
+  </div>`;
 }
 
 function renderLastResults() {
@@ -677,6 +789,7 @@ function renderStadium() {
 function onPlayNext() {
   const week = state.fixtures[state.currentWeek];
   if (!week) return;
+  const beforePos = divisionStandings(state.league.clubs, userDivision()).indexOf(userClub()) + 1;
   const results = playMatchweek(week, state.league.clubsById);
   state.lastResults = results;
   state.currentWeek++;
@@ -684,7 +797,11 @@ function onPlayNext() {
   // Show the user's own match in the modal.
   const uc = userClub();
   const mine = results.find(r => r.home === uc || r.away === uc);
-  if (mine) showMatchModal(mine);
+  if (mine) {
+    const afterPos = divisionStandings(state.league.clubs, uc.division).indexOf(uc) + 1;
+    addMatchInbox(mine, beforePos, afterPos);
+    showMatchModal(mine);
+  }
 
   updateFormAndMorale(results);
   render();
@@ -704,6 +821,10 @@ function showMatchModal(r) {
   const drew = r.result === 'D';
   const verdict = drew ? 'Draw' : won ? 'Win' : 'Loss';
   const vClass = drew ? 'warning' : won ? 'success' : 'danger';
+  const preview = matchPreview({ home: r.home.id, away: r.away.id });
+  const userProb = pct(preview.userWin);
+  const drawProb = pct(preview.probs.draw);
+  const oppProb = pct(preview.oppWin);
 
   document.getElementById('matchModalContent').innerHTML = `
     <h2 class="center">${r.home.name} vs ${r.away.name}</h2>
@@ -715,9 +836,30 @@ function showMatchModal(r) {
       <p>Expected goals — ${r.home.short}: <strong>${r.xg.home}</strong>, ${r.away.short}: <strong>${r.xg.away}</strong></p>
       <p>Ratings — ${r.home.short} ATT ${r.ratings.homeAtt} / DEF ${r.ratings.homeDef} (incl. +${HOME_BONUS} home)</p>
       <p>Ratings — ${r.away.short} ATT ${r.ratings.awayAtt} / DEF ${r.ratings.awayDef}</p>
+      <p>Pre-match probabilities — you ${userProb}%, draw ${drawProb}%, ${preview.opponent.short} ${oppProb}%.</p>
       <p class="muted small">Goals drawn from a fair Poisson model — favourites win at the correct rate, with no rigged streaks.</p>
     </div>`;
   document.getElementById('matchModal').hidden = false;
+}
+
+function addMatchInbox(r, beforePos, afterPos) {
+  const uc = userClub();
+  const isHome = r.home === uc;
+  const opponent = isHome ? r.away : r.home;
+  const won = (isHome && r.result === 'H') || (!isHome && r.result === 'A');
+  const drew = r.result === 'D';
+  const result = drew ? 'drew' : won ? 'won' : 'lost';
+  const score = isHome ? `${r.homeGoals}-${r.awayGoals}` : `${r.awayGoals}-${r.homeGoals}`;
+  const movement = beforePos === afterPos
+    ? `You stay ${afterPos}${ord(afterPos)}.`
+    : `Moved from ${beforePos}${ord(beforePos)} to ${afterPos}${ord(afterPos)}.`;
+  const type = won ? 'result-good' : drew ? 'result-neutral' : 'result-bad';
+
+  addInbox(
+    `Matchweek ${state.currentWeek}: ${score} ${result}`,
+    `${opponent.name} ${isHome ? 'visited' : 'hosted'} you. xG ${r.xg.home}-${r.xg.away}; ${movement}`,
+    type
+  );
 }
 
 // Light form/morale drift based on results (bounded, no wild swings).
@@ -810,6 +952,10 @@ function onNewSeason() {
   // 6a. The board sets a fresh objective for the new season & division.
   state.objective = setLeagueObjective(uc, state.lastMove, clubsInDivision(clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
+  state.inbox = [];
+  addInbox('Season review complete', `${grading.message} ${review.jobMessage} Balance now £${fmt(uc.cash)}.`, 'board');
+  addInbox('New objective set', `${state.objective.label}: ${state.objective.reason}`, 'board');
+  addInbox('Finance forecast refreshed', state.financeObjective.detail, 'finance');
 
   // 7. Build a clear end-of-season summary.
   let outcome;
@@ -852,6 +998,7 @@ function onNewSeason() {
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 function fmt(n) { return Math.round(n).toLocaleString('en-GB'); }
+function pct(n) { return Math.round(n * 100); }
 function ord(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return s[(v - 20) % 10] || s[v] || s[0]; }
 function avgOverall(club) {
   if (!club.players.length) return 0;
@@ -860,6 +1007,14 @@ function avgOverall(club) {
 function posOrder(pos) { return { GK: 0, DEF: 1, MID: 2, FWD: 3 }[pos] ?? 4; }
 function bandClass(band) {
   return band === 'safe' || band === 'ok' ? 'success' : band === 'warning' ? 'warning' : 'danger';
+}
+function toneClass(tone) {
+  return tone === 'green' ? 'success' : tone === 'gold' ? 'gold' : tone === 'red' ? 'danger' : '';
+}
+function addInbox(title, body, type = 'system') {
+  const meta = `S${state.season} · MW ${Math.min(state.currentWeek + 1, state.fixtures.length || 1)}`;
+  state.inbox.unshift({ title, body, type, meta, at: Date.now() });
+  state.inbox = state.inbox.slice(0, 12);
 }
 
 /* ---------- Objective UI helpers ---------- */
