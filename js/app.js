@@ -29,6 +29,10 @@ import {
 import {
   createClubHistory, buildSeasonMemory, applySeasonMemory, fanMood, clubIdentity,
 } from './history.js';
+import {
+  matchStory, divisionStory, transferMarketStory, transferCompletedStory,
+  infrastructureStory, seasonReviewStories, objectiveStory,
+} from './news.js';
 
 // v3 save schema (multi-division + board objectives). Older saves are
 // incompatible, so they are simply ignored and a fresh pyramid game starts.
@@ -90,8 +94,9 @@ function newGame() {
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
-  addInbox('Board objective set', `${state.objective.label}: ${state.objective.reason}`, 'board');
-  addInbox('Financial guardrail', state.financeObjective.detail, 'finance');
+  addStory(objectiveStory(state.objective));
+  addStory({ title: 'Finance guardrail agreed', body: state.financeObjective.detail, type: 'finance', category: 'Finance', importance: 1 });
+  addStory(transferMarketStory(state.market, uc));
 }
 
 function userClub() {
@@ -175,7 +180,7 @@ function load() {
       state.objective = setLeagueObjective(uc, null, clubsInDivision(clubs, uc.division).length);
     }
     if (!state.inbox.length) {
-      addInbox('Save loaded', 'Your club is ready. Review the next match and board objective before advancing.', 'system');
+      addStory({ title: 'Save loaded', body: 'Your club is ready. Review the next match and board objective before advancing.', type: 'system', category: 'Club', importance: 1 });
     }
     return true;
   } catch (e) { return false; }
@@ -217,12 +222,15 @@ function deserialiseClub(d) {
 function setupTabs() {
   document.querySelectorAll('[data-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
-      state.currentTab = btn.dataset.tab;
-      document.querySelectorAll('[data-tab]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      render();
+      switchTab(btn.dataset.tab);
     });
   });
+}
+
+function switchTab(tab) {
+  state.currentTab = tab;
+  document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  render();
 }
 
 function setupGlobalButtons() {
@@ -253,6 +261,7 @@ function render() {
 
   const renderers = {
     dashboard: renderDashboard,
+    news: renderNews,
     club: renderClubProfile,
     squad: renderSquad,
     tactics: renderTactics,
@@ -326,8 +335,8 @@ function renderDashboard() {
 
     <div class="card">
       <div class="flex-between">
-        <h2 class="mb0">Season Hub</h2>
-        <span class="muted small">${state.inbox.length} updates</span>
+        <h2 class="mb0">News Centre</h2>
+        <button class="btn-ghost btn-sm" id="openNews">Open full feed</button>
       </div>
       ${renderInbox()}
     </div>
@@ -371,6 +380,8 @@ function renderDashboard() {
   if (playBtn) playBtn.addEventListener('click', onPlayNext);
   const ns = document.getElementById('newSeason');
   if (ns) ns.addEventListener('click', onNewSeason);
+  const openNews = document.getElementById('openNews');
+  if (openNews) openNews.addEventListener('click', () => switchTab('news'));
 }
 
 function renderDevelopmentSummary() {
@@ -465,20 +476,40 @@ function renderSeasonHistoryRows(seasons) {
 }
 
 function renderInbox() {
-  const items = state.inbox.slice(0, 5);
-  if (!items.length) return '<p class="muted small mt">No updates yet. Play a matchweek to build the story of the season.</p>';
-  return `<div class="inbox-list mt">${items.map(item => `
-    <article class="inbox-item">
-      <div class="inbox-dot ${item.type}"></div>
+  return renderNewsList(state.inbox.slice(0, 5), true);
+}
+
+function renderNews() {
+  document.getElementById('news').innerHTML = `
+    <div class="card">
+      <div class="flex-between">
+        <h2 class="mb0">News Centre</h2>
+        <span class="muted small">${state.inbox.length} stories this save</span>
+      </div>
+      <p class="muted small mt">Stories are generated from real club events: results, board pressure, transfers, academy, finances, infrastructure, and league movement.</p>
+      ${renderNewsList(state.inbox, false)}
+    </div>`;
+}
+
+function renderNewsList(items, compact) {
+  if (!items.length) return '<p class="muted small mt">No stories yet. Play a matchweek to build the season narrative.</p>';
+  return `<div class="inbox-list mt ${compact ? 'compact' : ''}">${items.map(raw => {
+    const item = normaliseStory(raw);
+    return `
+    <article class="inbox-item news-item ${item.importance >= 3 ? 'major' : ''}">
+      <div class="inbox-dot ${item.type || 'system'}"></div>
       <div>
         <div class="flex-between inbox-title-row">
-          <strong>${item.title}</strong>
+          <div>
+            <span class="story-kicker">${item.category || 'Club'}</span>
+            <strong>${item.title}</strong>
+          </div>
           <span class="muted small">${item.meta}</span>
         </div>
         <p class="muted small">${item.body}</p>
       </div>
-    </article>
-  `).join('')}</div>`;
+    </article>`;
+  }).join('')}</div>`;
 }
 
 function matchPreview(fx) {
@@ -897,7 +928,9 @@ function renderTransfers() {
     render();
   });
   document.getElementById('refreshMarket').addEventListener('click', () => {
-    state.market = generateMarket(club); render();
+    state.market = generateMarket(club);
+    addStory(transferMarketStory(state.market, club));
+    render();
   });
 }
 
@@ -947,7 +980,7 @@ function submitBid(id) {
   const verdict = evaluateBid(target, fee, club);
   if (verdict.accepted) {
     completeTransferIn(target, fee, club, state.market);
-    addInbox('Transfer completed', `${target.name} joins for £${fmt(fee)}. Wage ratio now ${(projectedWageRatio(club) * 100).toFixed(0)}%.`, 'transfer');
+    addStory(transferCompletedStory({ player: target, fee, club, wageRatio: projectedWageRatio(club) }));
     closeTransferModal();
     alert(`${verdict.reason}\n${target.name} joins ${club.name}!`);
   } else {
@@ -1101,7 +1134,11 @@ function renderStadium() {
 
   document.getElementById('expand').addEventListener('click', () => {
     club.cash -= expansion.cost; club.stadiumCapacity += expansion.seats;
-    addInbox('Stadium expanded', `Capacity increased by ${fmt(expansion.seats)} seats. Forecast annual matchday gain: £${fmt(expansion.annualGain)}.`, 'finance');
+    addStory(infrastructureStory({
+      title: 'Stadium expansion approved',
+      body: `Capacity increased by ${fmt(expansion.seats)} seats. Forecast annual matchday gain: £${fmt(expansion.annualGain)}.`,
+      type: 'finance',
+    }));
     render();
   });
   document.getElementById('setTicket').addEventListener('click', () => {
@@ -1110,12 +1147,20 @@ function renderStadium() {
   });
   document.getElementById('upAcademy').addEventListener('click', () => {
     club.cash -= academyPlan.cost; club.academy++;
-    addInbox('Academy upgraded', `Academy is now level ${club.academy}. ${academyPlan.impact}`, 'development');
+    addStory(infrastructureStory({
+      title: 'Academy pathway upgraded',
+      body: `Academy is now level ${club.academy}. ${academyPlan.impact}`,
+      type: 'development',
+    }));
     render();
   });
   document.getElementById('upTraining').addEventListener('click', () => {
     club.cash -= trainingPlan.cost; club.training++;
-    addInbox('Training upgraded', `Training is now level ${club.training}. ${trainingPlan.impact}`, 'development');
+    addStory(infrastructureStory({
+      title: 'Training ground upgraded',
+      body: `Training is now level ${club.training}. ${trainingPlan.impact}`,
+      type: 'development',
+    }));
     render();
   });
 }
@@ -1181,22 +1226,11 @@ function showMatchModal(r) {
 
 function addMatchInbox(r, beforePos, afterPos) {
   const uc = userClub();
-  const isHome = r.home === uc;
-  const opponent = isHome ? r.away : r.home;
-  const won = (isHome && r.result === 'H') || (!isHome && r.result === 'A');
-  const drew = r.result === 'D';
-  const result = drew ? 'drew' : won ? 'won' : 'lost';
-  const score = isHome ? `${r.homeGoals}-${r.awayGoals}` : `${r.awayGoals}-${r.homeGoals}`;
-  const movement = beforePos === afterPos
-    ? `You stay ${afterPos}${ord(afterPos)}.`
-    : `Moved from ${beforePos}${ord(beforePos)} to ${afterPos}${ord(afterPos)}.`;
-  const type = won ? 'result-good' : drew ? 'result-neutral' : 'result-bad';
-
-  addInbox(
-    `Matchweek ${state.currentWeek}: ${score} ${result}`,
-    `${opponent.name} ${isHome ? 'visited' : 'hosted'} you. xG ${r.xg.home}-${r.xg.away}; ${movement}`,
-    type
-  );
+  addStory(matchStory({ result: r, userClub: uc, beforePos, afterPos }));
+  const table = divisionStandings(state.league.clubs, uc.division);
+  if (state.currentWeek % 3 === 0 || afterPos <= 2 || afterPos >= table.length - 1) {
+    addStory(divisionStory(table, uc));
+  }
 }
 
 // Light form/morale drift based on results (bounded, no wild swings).
@@ -1325,12 +1359,14 @@ function onNewSeason() {
   state.objective = setLeagueObjective(uc, state.lastMove, clubsInDivision(clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
-  addInbox('Season review complete', `${grading.message} ${review.jobMessage} Balance now £${fmt(uc.cash)}.`, 'board');
-  addInbox('Club history updated', seasonMemory.summary, 'history');
-  addInbox('Finance report', state.financeReport.summary, 'finance');
-  addInbox('Player development report', state.developmentReport.summary.text, 'development');
-  addInbox('New objective set', `${state.objective.label}: ${state.objective.reason}`, 'board');
-  addInbox('Finance forecast refreshed', state.financeObjective.detail, 'finance');
+  seasonReviewStories({
+    memory: seasonMemory,
+    financeReport: state.financeReport,
+    developmentReport: state.developmentReport,
+  }).forEach(addStory);
+  addStory(objectiveStory(state.objective));
+  addStory({ title: 'Finance forecast refreshed', body: state.financeObjective.detail, type: 'finance', category: 'Finance', importance: 1 });
+  addStory(transferMarketStory(state.market, uc));
 
   // 7. Build a clear end-of-season summary.
   let outcome;
@@ -1400,10 +1436,45 @@ function bandClass(band) {
 function toneClass(tone) {
   return tone === 'green' ? 'success' : tone === 'gold' ? 'gold' : tone === 'red' ? 'danger' : '';
 }
-function addInbox(title, body, type = 'system') {
+function addStory(story) {
+  if (!story) return;
   const meta = `S${state.season} · MW ${Math.min(state.currentWeek + 1, state.fixtures.length || 1)}`;
-  state.inbox.unshift({ title, body, type, meta, at: Date.now() });
-  state.inbox = state.inbox.slice(0, 12);
+  state.inbox.unshift({
+    title: story.title,
+    body: story.body,
+    type: story.type || 'system',
+    category: story.category || 'Club',
+    importance: story.importance || 1,
+    meta,
+    at: Date.now(),
+  });
+  state.inbox = state.inbox.slice(0, 30);
+}
+function addInbox(title, body, type = 'system') {
+  addStory({ title, body, type, category: storyCategory(type), importance: 1 });
+}
+function normaliseStory(item) {
+  return {
+    title: item.title,
+    body: item.body,
+    type: item.type || 'system',
+    category: item.category || storyCategory(item.type),
+    importance: item.importance || 1,
+    meta: item.meta || '',
+  };
+}
+function storyCategory(type) {
+  return {
+    board: 'Board',
+    finance: 'Finance',
+    transfer: 'Transfers',
+    development: 'Development',
+    history: 'Club',
+    league: 'League',
+    'result-good': 'Match',
+    'result-neutral': 'Match',
+    'result-bad': 'Match',
+  }[type] || 'Club';
 }
 
 /* ---------- Objective UI helpers ---------- */

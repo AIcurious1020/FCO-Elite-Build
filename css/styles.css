@@ -220,12 +220,28 @@ tbody tr:hover td { background: rgba(255,255,255,.03); }
 .inbox-dot.transfer { background: var(--accent); }
 .inbox-dot.history { background: var(--warning); }
 .inbox-dot.development { background: var(--accent-2); }
+.inbox-dot.league { background: var(--gold); }
 .inbox-dot.result-good { background: var(--accent-2); }
 .inbox-dot.result-neutral { background: var(--warning); }
 .inbox-dot.result-bad { background: var(--danger); }
 .inbox-title-row {
   gap: 8px;
   align-items: baseline;
+}
+.news-item.major {
+  border-color: rgba(79,138,255,.55);
+}
+.story-kicker {
+  display: block;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  margin-bottom: 2px;
+}
+.inbox-list.compact .inbox-item:nth-child(n+6) {
+  display: none;
 }
 .fixture-line { margin: 12px 0 0; }
 .prob-grid {
