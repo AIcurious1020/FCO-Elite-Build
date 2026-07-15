@@ -308,6 +308,16 @@ export function pressureStory(club, pressure) {
   };
 }
 
+export function staffDecisionStory(club, decision) {
+  return {
+    title: `${club.short} approve: ${decision.title}`,
+    body: decision.impact || decision.body,
+    type: decision.type === 'tighten_spending' ? 'finance' : decision.type === 'pressure_response' ? 'board' : 'staff',
+    category: 'Decision',
+    importance: decision.importance || 1,
+  };
+}
+
 function fmt(n) {
   return Math.round(n).toLocaleString('en-GB');
 }

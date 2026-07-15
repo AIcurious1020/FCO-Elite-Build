@@ -35,6 +35,7 @@ import {
   cupStory, cupRoundStory, cupDrawStory, rivalTransferStory, clubsToWatchStory,
   managerAppointmentStory, managerDirectiveStory,
   boardroomPolicyStory, directorAppointmentStory, managerMeetingStory, pressureStory,
+  staffDecisionStory,
 } from './news.js';
 import {
   processWeeklyInjuries, injuredPlayers, availabilityByPosition, missingStarters,
@@ -49,7 +50,7 @@ import {
 import {
   createDirectorForClub, directorMarketForClub, defaultBoardPlan,
   RECRUITMENT_POLICIES, BUDGET_PRIORITIES, recruitmentScore,
-  policyRecommendation, pressureSnapshot, budgetGuidance,
+  policyRecommendation, pressureSnapshot, budgetGuidance, createStaffReports,
 } from './staff.js';
 
 // v3 save schema (multi-division + board objectives). Older saves are
@@ -86,6 +87,7 @@ const state = {
   managerMarket: [],
   directorMarket: [],
   boardPlan: defaultBoardPlan(),
+  decisions: [],
 };
 
 /* ------------------------------------------------------------------ */
@@ -132,12 +134,14 @@ function newGame(userClubId = 'solihull') {
   state.worldActivity = [];
   state.managerMarket = availableManagersForClub(uc, state.season);
   state.directorMarket = directorMarketForClub(uc, state.season);
+  state.decisions = [];
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
   addStory(objectiveStory(state.objective));
   addStory({ title: 'Finance guardrail agreed', body: state.financeObjective.detail, type: 'finance', category: 'Finance', importance: 1 });
   addStory(transferMarketStory(state.market, uc));
+  generateDecisionReports('season-start');
 }
 
 function showClubSelection() {
@@ -453,6 +457,7 @@ function save() {
       managerMarket: state.managerMarket,
       directorMarket: state.directorMarket,
       boardPlan: state.boardPlan,
+      decisions: state.decisions,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -497,6 +502,7 @@ function load() {
     state.managerMarket = data.managerMarket ?? availableManagersForClub(clubsById[data.userClubId], data.season || 1);
     state.directorMarket = data.directorMarket ?? directorMarketForClub(clubsById[data.userClubId], data.season || 1);
     state.boardPlan = { ...defaultBoardPlan(), ...(data.boardPlan || {}) };
+    state.decisions = data.decisions ?? [];
     syncSeasonCalendar();
     state.currentEvent = nextCalendarIndex();
     if (state.currentTab === 'tactics') state.currentTab = 'manager';
@@ -710,6 +716,8 @@ function renderDashboard() {
       ${renderInbox()}
     </div>
 
+    ${renderDecisionInbox(true)}
+
     <div class="card">
       <div class="flex-between">
         <h2 class="mb0">Next Match Preview</h2>
@@ -783,6 +791,7 @@ function renderDashboard() {
   if (openTimelineCalendar) openTimelineCalendar.addEventListener('click', () => switchTab('fixtures'));
   const openBoardroom = document.getElementById('openBoardroom');
   if (openBoardroom) openBoardroom.addEventListener('click', () => switchTab('boardroom'));
+  bindDecisionButtons();
 }
 
 function renderDevelopmentSummary() {
@@ -934,6 +943,43 @@ function renderSeasonHistoryRows(seasons) {
 
 function renderInbox() {
   return renderNewsList(state.inbox.slice(0, 5), true);
+}
+
+function renderDecisionInbox(compact = false) {
+  const pending = state.decisions || [];
+  if (!pending.length) return compact ? '' : '<p class="muted small mt">No staff decisions pending.</p>';
+  const items = compact ? pending.slice(0, 3) : pending;
+  return `<div class="card">
+    <div class="flex-between">
+      <h2 class="mb0">Decision Inbox</h2>
+      <span class="muted small">${pending.length} pending</span>
+    </div>
+    <div class="decision-list mt">
+      ${items.map(decision => `
+        <article class="decision-item ${decision.importance >= 3 ? 'major' : ''}">
+          <div>
+            <span class="story-kicker">${decision.source}</span>
+            <strong>${decision.title}</strong>
+            <p class="muted small">${decision.body}</p>
+            <p class="small ${decision.importance >= 2 ? 'warning' : 'muted'}">${decision.impact}</p>
+          </div>
+          <div class="decision-actions">
+            <button class="btn btn-sm" data-decision-approve="${decision.id}">${decision.actionLabel || 'Approve'}</button>
+            <button class="btn-ghost btn-sm" data-decision-dismiss="${decision.id}">Dismiss</button>
+          </div>
+        </article>
+      `).join('')}
+    </div>
+  </div>`;
+}
+
+function bindDecisionButtons() {
+  document.querySelectorAll('[data-decision-approve]').forEach(btn => {
+    btn.addEventListener('click', () => approveDecision(btn.dataset.decisionApprove));
+  });
+  document.querySelectorAll('[data-decision-dismiss]').forEach(btn => {
+    btn.addEventListener('click', () => dismissDecision(btn.dataset.decisionDismiss));
+  });
 }
 
 function renderNews() {
@@ -1245,6 +1291,8 @@ function renderBoardroom() {
       </div>
     </div>
 
+    ${renderDecisionInbox(false)}
+
     <div class="card">
       <div class="flex-between">
         <h2 class="mb0">Director of Football Shortlist</h2>
@@ -1285,6 +1333,7 @@ function renderBoardroom() {
   document.querySelectorAll('[data-hire-director]').forEach(btn => {
     btn.addEventListener('click', () => hireDirector(btn.dataset.hireDirector));
   });
+  bindDecisionButtons();
 }
 
 function holdManagerMeeting(action, pressure) {
@@ -1312,6 +1361,39 @@ function hireDirector(id) {
   render();
 }
 
+function approveDecision(id) {
+  const decision = state.decisions.find(d => d.id === id);
+  if (!decision) return;
+  const club = userClub();
+
+  if (decision.type === 'scout_policy') {
+    state.boardPlan.recruitmentPolicy = decision.payload.policy;
+    state.market = guidedMarket(club);
+  }
+  if (decision.type === 'back_manager' && club.manager) {
+    club.manager.confidence = Math.min(95, (club.manager.confidence ?? 60) + 6);
+  }
+  if (decision.type === 'tighten_spending' || decision.type === 'delay_facilities') {
+    state.boardPlan.budgetPriority = decision.payload.priority || 'cautious';
+  }
+  if (decision.type === 'greenlight_transfer') {
+    state.transferFilters = { ...(state.transferFilters || {}), affordableOnly: true };
+    state.currentTab = 'transfers';
+  }
+  if (decision.type === 'pressure_response') {
+    state.confidence = Math.min(100, state.confidence + 3);
+  }
+
+  addStory(staffDecisionStory(club, decision));
+  state.decisions = state.decisions.filter(d => d.id !== id);
+  render();
+}
+
+function dismissDecision(id) {
+  state.decisions = state.decisions.filter(d => d.id !== id);
+  render();
+}
+
 function currentPressure(club, pos, track) {
   const history = state.clubHistory || createClubHistory(club);
   const latest = history.seasons?.at(-1) || null;
@@ -1322,6 +1404,31 @@ function currentPressure(club, pos, track) {
     track,
     fanMood: fanMood(history, state.confidence, latest),
   });
+}
+
+function generateDecisionReports(reason = 'routine') {
+  if (!state.league) return;
+  const club = userClub();
+  const table = divisionStandings(state.league.clubs, club.division);
+  const pos = table.indexOf(club) + 1;
+  const track = trackStatus(state.objective, pos, club.played);
+  const pressure = currentPressure(club, pos, track);
+  const reports = createStaffReports({
+    club,
+    market: state.market,
+    forecast: financeForecast(club),
+    pressure,
+    track,
+    boardPlan: state.boardPlan,
+    season: state.season,
+    week: state.currentWeek,
+    reason,
+  });
+  const existing = new Set((state.decisions || []).map(d => d.id));
+  const fresh = reports.filter(d => !existing.has(d.id));
+  state.decisions = [...(state.decisions || []), ...fresh]
+    .sort((a, b) => (b.importance || 1) - (a.importance || 1))
+    .slice(0, 8);
 }
 
 /* ---------- Squad ---------- */
@@ -2111,6 +2218,7 @@ function playLeagueEvent(event) {
   processWeeklyInjuries(results).forEach(event => addStory(injuryStory(event, uc)));
   processWorldActivity(event);
   processPressureStory(event);
+  generateDecisionReports('league-event');
 }
 
 function playCupEvent(event) {
@@ -2156,6 +2264,7 @@ function playCupEvent(event) {
   }));
   const draw = cupDrawStory({ cup: state.cup, clubsById: state.league.clubsById, userClub: uc });
   if (draw) addStory(draw);
+  generateDecisionReports('cup-event');
 }
 
 function onPlayCupRound() {
@@ -2377,6 +2486,7 @@ function onNewSeason() {
   state.currentEvent = 0;
   state.resultMemory = [];
   state.worldActivity = [];
+  state.decisions = [];
 
   // 6a. The board sets a fresh objective for the new season & division.
   state.objective = setLeagueObjective(uc, state.lastMove, clubsInDivision(clubs, uc.division).length);
@@ -2390,6 +2500,7 @@ function onNewSeason() {
   addStory(objectiveStory(state.objective));
   addStory({ title: 'Finance forecast refreshed', body: state.financeObjective.detail, type: 'finance', category: 'Finance', importance: 1 });
   addStory(transferMarketStory(state.market, uc));
+  generateDecisionReports('new-season');
 
   // 7. Build a clear end-of-season summary.
   let outcome;

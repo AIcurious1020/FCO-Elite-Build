@@ -444,6 +444,21 @@ tr.unavailable-row td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
 .job-banner.danger  { background: rgba(255,95,111,0.12); border: 1px solid rgba(255,95,111,0.4); }
 .job-banner.warning { background: rgba(255,180,84,0.12); border: 1px solid rgba(255,180,84,0.4); }
 
+/* ---------- Decision inbox ---------- */
+.decision-list { display: grid; gap: 10px; }
+.decision-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel-2);
+}
+.decision-item.major { border-color: rgba(255,180,84,0.45); }
+.decision-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
 /* ---------- Match explanation ---------- */
 .explanation {
   background: var(--panel-2);
@@ -516,6 +531,8 @@ select, input {
   th, td { padding: 7px 5px; font-size: 12px; }
   .prob-grid { grid-template-columns: 1fr; }
   .inbox-title-row { align-items: flex-start; }
+  .decision-item { grid-template-columns: 1fr; }
+  .decision-actions { justify-content: flex-start; }
   .need-grid,
   .transfer-detail-grid,
   .ticket-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -157,6 +157,86 @@ export function budgetGuidance(plan, forecast) {
   };
 }
 
+export function createStaffReports({ club, market = [], forecast, pressure, track, boardPlan, season = 1, week = 0 }) {
+  const reports = [];
+  const policy = boardPlan?.recruitmentPolicy || 'balanced';
+  const bestTarget = market[0] || null;
+  const cashTight = forecast?.risk === 'danger' || forecast?.risk === 'warning' || forecast?.remainingWeeklyWage < 0;
+
+  if (bestTarget) {
+    reports.push({
+      id: `S${season}-W${week}-transfer-${bestTarget.id}`,
+      type: 'greenlight_transfer',
+      source: 'Director of Football',
+      title: `${club.director?.name || 'DoF'} recommends ${bestTarget.name}`,
+      body: `${bestTarget.position} ${bestTarget.name} fits the current ${RECRUITMENT_POLICIES[policy]?.label || 'balanced'} brief. Approving this opens the transfer list with staff filters ready.`,
+      actionLabel: 'Review target list',
+      impact: 'Sets transfer filters to affordable targets and opens Transfers.',
+      importance: 2,
+      payload: { playerId: bestTarget.id },
+    });
+  }
+
+  if (track?.state === 'offtrack' || pressure?.band === 'danger') {
+    reports.push({
+      id: `S${season}-W${week}-manager-backing`,
+      type: 'back_manager',
+      source: 'Board Secretary',
+      title: 'Manager backing requested',
+      body: `${club.manager?.name || 'The head coach'} is working under pressure. A public statement can steady the dressing room without changing tactics.`,
+      actionLabel: 'Back manager',
+      impact: 'Raises manager confidence and creates a boardroom story.',
+      importance: 2,
+      payload: {},
+    });
+  }
+
+  if (cashTight) {
+    reports.push({
+      id: `S${season}-W${week}-spending-control`,
+      type: 'tighten_spending',
+      source: 'Finance Director',
+      title: 'Spending control advised',
+      body: `${forecast.label}. Moving to cash protection reduces short-term risk without forcing emergency sales.`,
+      actionLabel: 'Tighten spending',
+      impact: 'Switches budget priority to Cash Protection.',
+      importance: 2,
+      payload: { priority: 'cautious' },
+    });
+  }
+
+  if (pressure?.band === 'warning' || pressure?.band === 'danger') {
+    reports.push({
+      id: `S${season}-W${week}-pressure-response`,
+      type: 'pressure_response',
+      source: 'Media Officer',
+      title: 'Supporter message recommended',
+      body: `${pressure.label}: ${pressure.text} A calm chairman statement can buy time for the current plan.`,
+      actionLabel: 'Address supporters',
+      impact: 'Slightly improves board confidence and records a media story.',
+      importance: pressure.band === 'danger' ? 3 : 1,
+      payload: {},
+    });
+  }
+
+  if (policy === 'balanced' && club.played >= 4) {
+    const suggested = track?.state === 'ontrack' ? 'promotion_push' : cashTight ? 'wage_control' : 'bargains';
+    reports.push({
+      id: `S${season}-W${week}-scout-focus-${suggested}`,
+      type: 'scout_policy',
+      source: 'Recruitment Team',
+      title: `${RECRUITMENT_POLICIES[suggested].label} scouting focus`,
+      body: `The current season trend suggests a more specific recruitment brief than Balanced Squad Build.`,
+      actionLabel: 'Approve focus',
+      impact: `Changes recruitment policy to ${RECRUITMENT_POLICIES[suggested].label}.`,
+      importance: 1,
+      payload: { policy: suggested },
+    });
+  }
+
+  return reports;
+}
+
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }

@@ -16,7 +16,7 @@ A web-first football club management sim inspired by Football Chairman Pro 2, re
 | Dashboard | Season progress, next fixture, one-click "Play Next Matchweek", latest results |
 | News | Season stories covering results, transfers, injuries, cups, and rival activity |
 | Club | Club identity, history, honours, records, and fan mood |
-| Boardroom | Director of Football, recruitment policy, budget priority, manager meetings, fan/media pressure |
+| Boardroom | Decision inbox, Director of Football, recruitment policy, budget priority, manager meetings, fan/media pressure |
 | Squad | Full squad with position-weighted overalls, best-XI highlighting, sell players |
 | Manager | Hire/replace the head coach, set chairman instructions, and review tactical output |
 | Fixtures | Your full season calendar, including scheduled league and cup dates |
@@ -43,7 +43,7 @@ FCO-elite/
     finance.js    # revenue, costs, health bands
     transfers.js  # market + transparent negotiation
     manager.js    # head coach market, style, directives, tactical output
-    staff.js      # boardroom staff, recruitment policy, budgets, pressure
+    staff.js      # boardroom staff, recruitment policy, budgets, pressure, staff reports
     data.js       # seed football pyramid, generated squads
 ```
 
