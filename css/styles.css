@@ -166,6 +166,16 @@ body {
 }
 .dashboard-record strong { font-size: 20px; }
 
+.chairman-brief {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+}
+.chairman-brief .btn {
+  min-width: 170px;
+}
+
 .health-strip {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -686,6 +696,8 @@ select, input {
   .stat span { font-size: 16px; }
   th, td { padding: 7px 5px; font-size: 12px; }
   .dashboard-hero { align-items: flex-start; }
+  .chairman-brief { grid-template-columns: 1fr; }
+  .chairman-brief .btn { width: 100%; }
   .health-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .health-tile { grid-template-columns: 1fr; min-height: 86px; }
   .dashboard-alert { grid-template-columns: 28px 1fr; }

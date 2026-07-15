@@ -704,6 +704,8 @@ function renderDashboard() {
       </div>
     </div>
 
+    ${renderChairmanBrief({ club, pos, track, pressure, nextEvent, preview })}
+
     <div class="health-strip">
       ${renderHealthTile({ icon: '🏆', label: 'League', value: `${pos}${ord(pos)}`, sub: trackWord(track.state), band: track.state === 'ontrack' ? 'safe' : track.state === 'close' ? 'warning' : track.state === 'offtrack' ? 'danger' : 'ok', tab: 'table' })}
       ${renderHealthTile({ icon: '🏟', label: 'Finance', value: `${finance.score}%`, sub: health.label, band: finance.band, tab: 'finance' })}
@@ -746,12 +748,19 @@ function renderDashboard() {
 
   const playBtn = document.getElementById('playNext');
   if (playBtn) playBtn.addEventListener('click', onPlayNext);
+  const briefPlayBtn = document.getElementById('briefPlayNext');
+  if (briefPlayBtn) briefPlayBtn.addEventListener('click', onPlayNext);
   const openFixtures = document.getElementById('openFixtures');
   if (openFixtures) openFixtures.addEventListener('click', () => switchTab('fixtures'));
   const ns = document.getElementById('newSeason');
   if (ns) {
     ns.disabled = state.cup?.status === 'active';
     ns.addEventListener('click', onNewSeason);
+  }
+  const briefNewSeason = document.getElementById('briefNewSeason');
+  if (briefNewSeason) {
+    briefNewSeason.disabled = state.cup?.status === 'active';
+    briefNewSeason.addEventListener('click', onNewSeason);
   }
   const openNews = document.getElementById('openNews');
   if (openNews) openNews.addEventListener('click', () => switchTab('news'));
@@ -761,6 +770,64 @@ function renderDashboard() {
     btn.addEventListener('click', () => switchTab(btn.dataset.dashboardTab));
   });
   bindDecisionButtons();
+}
+
+function renderChairmanBrief({ club, pos, track, pressure, nextEvent, preview }) {
+  const pending = state.decisions || [];
+  const latestResult = (state.resultMemory || []).find(item => item.involved);
+  const action = pending.length
+    ? {
+      label: 'Review Boardroom',
+      tab: 'boardroom',
+      tone: 'danger',
+      title: pending[0].type === 'chairman_agenda' ? pending[0].title : 'Chairman approval needed',
+      text: pending[0].body,
+    }
+    : nextEvent
+      ? {
+        label: preview ? 'Play Next Fixture' : nextEvent.type === 'cup' ? 'Simulate Cup Round' : 'Continue Calendar',
+        play: true,
+        tone: pressure.band === 'danger' ? 'warning' : 'safe',
+        title: preview ? `${preview.home.short} vs ${preview.away.short}` : nextEvent.label,
+        text: preview
+          ? `${preview.competition}${preview.roundName ? ` · ${preview.roundName}` : ''}. ${dashboardMatchWarning(preview).text}`
+          : renderCalendarEventText(nextEvent),
+      }
+      : {
+        label: `Start Season ${state.season + 1}`,
+        newSeason: true,
+        tone: 'safe',
+        title: 'Season complete',
+        text: 'Review the season outcome, then start the next campaign.',
+      };
+  const resultText = latestResult
+    ? `${latestResult.competition || 'Latest'}: ${briefResultText(latestResult)}`
+    : `You are ${pos}${ord(pos)} and ${trackWord(track.state).toLowerCase()} against the board objective.`;
+  return `<div class="card chairman-brief">
+    <div>
+      <span class="story-kicker">Chairman Brief</span>
+      <h2 class="mb0">${action.title}</h2>
+      <p class="muted small mt">${action.text}</p>
+      <p class="small ${bandClass(track.state === 'offtrack' ? 'danger' : pressure.band)} mt">${resultText}</p>
+    </div>
+    <button class="btn ${action.tone === 'danger' ? 'btn-danger' : ''}" ${action.play ? 'id="briefPlayNext"' : action.newSeason ? 'id="briefNewSeason"' : `data-dashboard-tab="${action.tab}"`}>
+      ${action.label}
+    </button>
+  </div>`;
+}
+
+function renderCalendarEventText(event) {
+  if (!event) return 'No event scheduled.';
+  if (event.type === 'cup') return 'Your club may not be involved, but the cup round will progress and update the draw.';
+  return event.label || 'Continue the season calendar.';
+}
+
+function briefResultText(memory) {
+  const clubs = state.league?.clubsById || {};
+  const home = clubs[memory.home]?.short || 'Home';
+  const away = clubs[memory.away]?.short || 'Away';
+  const score = `${home} ${memory.homeGoals}-${memory.awayGoals} ${away}`;
+  return memory.involved && memory.outcome ? `${score} (${memory.outcome})` : `${memory.round || 'Round'}: ${score}`;
 }
 
 function renderHealthTile({ icon, label, value, sub, band, tab }) {
@@ -1464,6 +1531,8 @@ function renderBoardroom() {
   const managerOptions = managerStatementOptions({ club, pos, track, pressure });
   const supporterOptions = supporterStatementOptions({ club, pos, track, pressure });
   const chairmanSummary = chairmanProfileSummary();
+  const showManagerMeeting = shouldOfferManagerMeeting({ club, track, pressure });
+  const showSupporterMessage = shouldOfferSupporterMessage({ track, pressure });
   state.directorMarket = candidates;
 
   document.getElementById('boardroom').innerHTML = `
@@ -1484,6 +1553,8 @@ function renderBoardroom() {
       </div>
       <p class="small ${bandClass(pressure.band)} mt">${pressure.text} Pressure score: ${pressure.score}/100.</p>
     </div>
+
+    ${renderDecisionInbox(false)}
 
     <div class="grid">
       <div class="card mb0">
@@ -1512,39 +1583,16 @@ function renderBoardroom() {
       </div>
     </div>
 
-    <div class="card">
+    ${(showManagerMeeting || showSupporterMessage) ? `<div class="grid">
+      ${showManagerMeeting ? renderManagerMeetingPanel(club, managerOptions) : ''}
+      ${showSupporterMessage ? renderSupporterMessagePanel(pressure, supporterOptions) : ''}
+    </div>` : `<div class="card">
       <div class="flex-between">
-        <h2 class="mb0">Manager Performance Meeting</h2>
-        <span class="muted small">${club.manager.name} · confidence ${club.manager.confidence ?? 60}/100</span>
+        <h2 class="mb0">Chairman Interventions</h2>
+        <span class="pill obj-ontrack">No meeting needed</span>
       </div>
-      <p class="muted small mt">Choose a chairman message that fits the league position and pressure. The manager reacts based on whether the demand feels fair.</p>
-      <div class="grid mt">
-        ${managerOptions.map(opt => `<div class="mini-panel">
-          <span class="muted small">${opt.tone}</span>
-          <strong>${opt.label}</strong>
-          <small class="muted">${opt.preview}</small>
-          <button class="btn-ghost btn-sm mt ${opt.risk === 'high' ? 'danger-action' : ''}" data-manager-meeting="${opt.id}">Say this</button>
-        </div>`).join('')}
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="flex-between">
-        <h2 class="mb0">Supporter Message</h2>
-        <span class="muted small">Trust ${state.fanTrust}/100 · ${pressure.label}</span>
-      </div>
-      <p class="muted small mt">Public statements can calm pressure, increase scrutiny, or shift anger between you and the manager.</p>
-      <div class="grid mt">
-        ${supporterOptions.map(opt => `<div class="mini-panel">
-          <span class="muted small">${opt.tone}</span>
-          <strong>${opt.label}</strong>
-          <small class="muted">${opt.preview}</small>
-          <button class="btn-ghost btn-sm mt ${opt.risk === 'high' ? 'danger-action' : ''}" data-supporter-message="${opt.id}">Release statement</button>
-        </div>`).join('')}
-      </div>
-    </div>
-
-    ${renderDecisionInbox(false)}
+      <p class="muted small mt">The manager and supporters are not calling for a public intervention this week. Keep routine controls light and advance the season when ready.</p>
+    </div>`}
 
     <div class="card">
       <div class="flex-between">
@@ -1592,6 +1640,57 @@ function renderBoardroom() {
     btn.addEventListener('click', () => hireDirector(btn.dataset.hireDirector));
   });
   bindDecisionButtons();
+}
+
+function shouldOfferManagerMeeting({ club, track, pressure }) {
+  if ((club.manager?.confidence ?? 60) <= 45) return true;
+  if (track.state === 'offtrack') return true;
+  if (pressure.band === 'danger') return true;
+  if (club.played > 0 && club.played % 8 === 0) return true;
+  return false;
+}
+
+function shouldOfferSupporterMessage({ track, pressure }) {
+  if (pressure.band === 'warning' || pressure.band === 'danger') return true;
+  if (track.state === 'offtrack') return true;
+  if ((state.fanTrust ?? 60) <= 45) return true;
+  return false;
+}
+
+function renderManagerMeetingPanel(club, managerOptions) {
+  return `<div class="card mb0">
+    <div class="flex-between">
+      <h2 class="mb0">Manager Meeting</h2>
+      <span class="muted small">${club.manager.name} · confidence ${club.manager.confidence ?? 60}/100</span>
+    </div>
+    <p class="muted small mt">Use this when form, confidence, or pressure makes a chairman conversation worthwhile.</p>
+    <div class="grid mt">
+      ${managerOptions.map(opt => `<div class="mini-panel">
+        <span class="muted small">${opt.tone}</span>
+        <strong>${opt.label}</strong>
+        <small class="muted">${opt.preview}</small>
+        <button class="btn-ghost btn-sm mt ${opt.risk === 'high' ? 'danger-action' : ''}" data-manager-meeting="${opt.id}">Say this</button>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+function renderSupporterMessagePanel(pressure, supporterOptions) {
+  return `<div class="card mb0">
+    <div class="flex-between">
+      <h2 class="mb0">Supporter Message</h2>
+      <span class="muted small">Trust ${state.fanTrust}/100 · ${pressure.label}</span>
+    </div>
+    <p class="muted small mt">Use public statements when pressure needs a visible chairman response.</p>
+    <div class="grid mt">
+      ${supporterOptions.map(opt => `<div class="mini-panel">
+        <span class="muted small">${opt.tone}</span>
+        <strong>${opt.label}</strong>
+        <small class="muted">${opt.preview}</small>
+        <button class="btn-ghost btn-sm mt ${opt.risk === 'high' ? 'danger-action' : ''}" data-supporter-message="${opt.id}">Release statement</button>
+      </div>`).join('')}
+    </div>
+  </div>`;
 }
 
 function managerStatementOptions({ club, pos, track, pressure }) {
@@ -2074,7 +2173,7 @@ function createChairmanAgenda({ club, pos, track, pressure, forecast }) {
       ],
     });
   }
-  return agenda.slice(0, 3);
+  return agenda.sort((a, b) => (b.importance || 1) - (a.importance || 1)).slice(0, 1);
 }
 
 function dedupeDecisions(decisions) {

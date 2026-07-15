@@ -13,10 +13,10 @@ A web-first football club management sim inspired by Football Chairman Pro 2, re
 
 | Tab | What it does |
 |-----|--------------|
-| Dashboard | Icon-led club health, decisions, alerts, next fixture, and latest headlines |
+| Dashboard | Chairman brief, icon-led club health, decisions, next fixture, and latest headlines |
 | News | Season stories covering results, transfers, injuries, cups, and rival activity |
 | Club | Club identity, chairman profile, history, honours, records, and fan mood |
-| Boardroom | Chairman Agenda dilemmas, Director of Football, recruitment policy, contract renewals, budget priority, manager statements, supporter messaging, fan/media pressure |
+| Boardroom | Decision-first Chairman Agenda, Director of Football, recruitment policy, contract renewals, budget priority, contextual manager/supporter interventions |
 | Squad | Full squad with position-weighted overalls, best-XI highlighting, contract status, manager player views, sell players |
 | Manager | Hire/replace the head coach, set chairman instructions, and review tactical output |
 | Fixtures | Your full season calendar, including scheduled league and cup dates |
