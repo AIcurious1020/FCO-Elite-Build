@@ -1168,9 +1168,10 @@ function renderDecisionInbox(compact = false) {
   const pending = state.decisions || [];
   if (!pending.length) return compact ? '' : '<p class="muted small mt">No staff decisions pending.</p>';
   const items = compact ? pending.slice(0, 3) : pending;
+  const hasAgenda = pending.some(decision => decision.type === 'chairman_agenda');
   return `<div class="card">
     <div class="flex-between">
-      <h2 class="mb0">Decision Inbox</h2>
+      <h2 class="mb0">${hasAgenda ? 'Chairman Agenda' : 'Decision Inbox'}</h2>
       <span class="muted small">${pending.length} pending</span>
     </div>
     <div class="decision-list mt">
@@ -1181,11 +1182,13 @@ function renderDecisionInbox(compact = false) {
             <strong>${decision.title}</strong>
             <p class="muted small">${decision.body}</p>
             ${decision.managerView ? `<p class="small ${bandClass(decision.managerView.band)}">Manager view: ${decision.managerView.label}</p>` : ''}
-            <p class="small ${decision.importance >= 2 ? 'warning' : 'muted'}">${decision.impact}</p>
+            ${decision.impact ? `<p class="small ${decision.importance >= 2 ? 'warning' : 'muted'}">${decision.impact}</p>` : ''}
           </div>
           <div class="decision-actions">
-            <button class="btn btn-sm" data-decision-approve="${decision.id}">${decision.actionLabel || 'Approve'}</button>
-            <button class="btn-ghost btn-sm" data-decision-dismiss="${decision.id}">${decision.dismissLabel || 'Dismiss'}</button>
+            ${decision.choices
+              ? decision.choices.map((choice, i) => `<button class="${i === 0 ? 'btn' : 'btn-ghost'} btn-sm ${choice.risk === 'high' ? 'danger-action' : ''}" data-agenda-choice="${decision.id}:${choice.id}">${choice.label}</button>`).join('')
+              : `<button class="btn btn-sm" data-decision-approve="${decision.id}">${decision.actionLabel || 'Approve'}</button>
+                <button class="btn-ghost btn-sm" data-decision-dismiss="${decision.id}">${decision.dismissLabel || 'Dismiss'}</button>`}
           </div>
         </article>
       `).join('')}
@@ -1199,6 +1202,12 @@ function bindDecisionButtons() {
   });
   document.querySelectorAll('[data-decision-dismiss]').forEach(btn => {
     btn.addEventListener('click', () => dismissDecision(btn.dataset.decisionDismiss));
+  });
+  document.querySelectorAll('[data-agenda-choice]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const [id, choiceId] = btn.dataset.agendaChoice.split(':');
+      chooseAgendaOption(id, choiceId);
+    });
   });
 }
 
@@ -1851,6 +1860,105 @@ function approveDecision(id) {
   render();
 }
 
+function chooseAgendaOption(id, choiceId) {
+  const decision = state.decisions.find(d => d.id === id);
+  const choice = decision?.choices?.find(c => c.id === choiceId);
+  if (!decision || !choice) return;
+  const club = userClub();
+  const manager = club.manager;
+  const applyManager = delta => {
+    if (manager) manager.confidence = clampScore((manager.confidence ?? 60) + delta);
+  };
+
+  if (choice.effect === 'manager_back') {
+    applyManager(7);
+    state.fanTrust = clampScore((state.fanTrust ?? 60) - 2);
+    applyChairmanTrait({ patience: 5, delegation: 2 });
+  }
+  if (choice.effect === 'manager_demand') {
+    applyManager(-3);
+    state.confidence = clampScore(state.confidence + 2);
+    applyChairmanTrait({ ambition: 3, patience: -1 });
+  }
+  if (choice.effect === 'manager_shortlist') {
+    state.managerMarket = availableManagersForClub(club, state.season);
+    applyManager(-6);
+    state.confidence = clampScore(state.confidence - 1);
+    applyChairmanTrait({ patience: -5, ambition: 2 });
+  }
+  if (choice.effect === 'finance_protect') {
+    state.boardPlan.budgetPriority = 'cautious';
+    state.confidence = clampScore(state.confidence + 3);
+    applyChairmanTrait({ prudence: 6, ambition: -2 });
+  }
+  if (choice.effect === 'finance_hold') {
+    state.confidence = clampScore(state.confidence + 1);
+    applyChairmanTrait({ patience: 2, prudence: 1 });
+  }
+  if (choice.effect === 'finance_push') {
+    state.boardPlan.budgetPriority = 'squad';
+    state.confidence = clampScore(state.confidence - 2);
+    state.fanTrust = clampScore((state.fanTrust ?? 60) + 2);
+    applyChairmanTrait({ ambition: 6, prudence: -5 });
+  }
+  if (choice.effect === 'recruitment_fund') {
+    state.currentTab = 'transfers';
+    state.transferFilters = { ...(state.transferFilters || {}), affordableOnly: false };
+    applyChairmanTrait({ ambition: 3, delegation: 2 });
+  }
+  if (choice.effect === 'recruitment_value') {
+    state.boardPlan.recruitmentPolicy = 'bargains';
+    state.transferFilters = { ...(state.transferFilters || {}), affordableOnly: true };
+    refreshDealRoomRecommendations(club, 'agenda-value');
+    applyChairmanTrait({ prudence: 4, delegation: 1 });
+  }
+  if (choice.effect === 'recruitment_pause') {
+    state.transferRecommendations = { ...(state.transferRecommendations || {}), ids: [] };
+    applyChairmanTrait({ prudence: 3, patience: 2, ambition: -2 });
+  }
+  if (choice.effect === 'supporter_own') {
+    state.fanTrust = clampScore((state.fanTrust ?? 60) + 5);
+    state.confidence = clampScore(state.confidence + 1);
+    applyChairmanTrait({ supporter: 5, patience: 1 });
+  }
+  if (choice.effect === 'supporter_quiet') {
+    state.fanTrust = clampScore((state.fanTrust ?? 60) - 2);
+    applyChairmanTrait({ prudence: 1, supporter: -1 });
+  }
+  if (choice.effect === 'supporter_staff') {
+    applyManager(-4);
+    state.fanTrust = clampScore((state.fanTrust ?? 60) + 1);
+    applyChairmanTrait({ ambition: 2, patience: -3, supporter: -1 });
+  }
+
+  addStory({
+    title: `${club.short}: ${decision.title}`,
+    body: `Chairman choice: ${choice.label}. ${agendaChoiceSummary(choice.effect)}`,
+    type: choice.risk === 'high' ? 'result-bad' : 'board',
+    category: 'Boardroom',
+    importance: decision.importance || 1,
+  });
+  state.decisions = state.decisions.filter(d => d.id !== id);
+  render();
+}
+
+function agendaChoiceSummary(effect) {
+  return {
+    manager_back: 'The club chose stability and gave the manager breathing room.',
+    manager_demand: 'The club raised expectations without changing personnel.',
+    manager_shortlist: 'The club quietly opened a succession route.',
+    finance_protect: 'Cash protection became the priority.',
+    finance_hold: 'The club stayed balanced while monitoring risk.',
+    finance_push: 'The chairman accepted financial risk to chase progress.',
+    recruitment_fund: 'The recruitment brief moved to the front of the agenda.',
+    recruitment_value: 'The DoF was asked to find a cheaper route.',
+    recruitment_pause: 'The market was paused until the case is stronger.',
+    supporter_own: 'Supporters heard a direct accountability message.',
+    supporter_quiet: 'The chairman chose not to feed the noise.',
+    supporter_staff: 'Pressure shifted toward the football staff.',
+  }[effect] || 'The club direction shifted.';
+}
+
 function dismissDecision(id) {
   state.decisions = state.decisions.filter(d => d.id !== id);
   render();
@@ -1881,10 +1989,11 @@ function generateDecisionReports(reason = 'routine') {
   const pos = table.indexOf(club) + 1;
   const track = trackStatus(state.objective, pos, club.played);
   const pressure = currentPressure(club, pos, track);
+  const forecast = financeForecast(club);
   const reports = createStaffReports({
     club,
     market: state.market,
-    forecast: financeForecast(club),
+    forecast,
     pressure,
     track,
     boardPlan: state.boardPlan,
@@ -1892,12 +2001,80 @@ function generateDecisionReports(reason = 'routine') {
     week: state.currentWeek,
     reason,
   });
-  const enriched = reports.map(enrichDecisionReport);
+  const actionReports = reports.filter(report => report.type === 'renew_contract');
+  const agenda = createChairmanAgenda({ club, pos, track, pressure, forecast, reason });
+  const enriched = [...actionReports.map(enrichDecisionReport), ...agenda];
   const existing = new Set((state.decisions || []).map(decisionKey));
   const fresh = enriched.filter(d => !existing.has(decisionKey(d)));
   state.decisions = dedupeDecisions([...(state.decisions || []), ...fresh])
     .sort((a, b) => (b.importance || 1) - (a.importance || 1))
     .slice(0, 8);
+}
+
+function createChairmanAgenda({ club, pos, track, pressure, forecast }) {
+  const agenda = [];
+  const period = Math.max(0, Math.floor((state.currentWeek || 0) / 4));
+  if (club.played >= 4 && (track.state === 'offtrack' || pressure.band === 'danger')) {
+    agenda.push({
+      id: `S${state.season}-P${period}-agenda-manager-path`,
+      type: 'chairman_agenda',
+      source: 'Chairman Agenda',
+      title: 'Manager path',
+      body: 'Results are drifting. Do you protect stability or force a change in tone?',
+      importance: pressure.band === 'danger' ? 3 : 2,
+      choices: [
+        { id: 'back', label: 'Back him', effect: 'manager_back' },
+        { id: 'demand', label: 'Demand response', effect: 'manager_demand' },
+        { id: 'shortlist', label: 'Review alternatives', effect: 'manager_shortlist', risk: 'high' },
+      ],
+    });
+  }
+  if (forecast?.risk === 'danger' || forecast?.risk === 'warning' || forecast?.remainingWeeklyWage < 0) {
+    agenda.push({
+      id: `S${state.season}-P${period}-agenda-finance-path`,
+      type: 'chairman_agenda',
+      source: 'Chairman Agenda',
+      title: 'Money or momentum',
+      body: 'Finance is tightening. Do you protect the club or keep backing the sporting push?',
+      importance: forecast.risk === 'danger' ? 3 : 2,
+      choices: [
+        { id: 'protect', label: 'Protect cash', effect: 'finance_protect' },
+        { id: 'hold', label: 'Hold course', effect: 'finance_hold' },
+        { id: 'push', label: 'Keep pushing', effect: 'finance_push', risk: 'high' },
+      ],
+    });
+  }
+  if (state.transferRecommendations?.ids?.length) {
+    agenda.push({
+      id: `S${state.season}-P${period}-agenda-recruitment-path`,
+      type: 'chairman_agenda',
+      source: 'Chairman Agenda',
+      title: 'Recruitment direction',
+      body: 'The DoF has a live brief. Do you fund it, seek value, or pause the market?',
+      importance: 2,
+      choices: [
+        { id: 'fund', label: 'Fund brief', effect: 'recruitment_fund' },
+        { id: 'value', label: 'Find value', effect: 'recruitment_value' },
+        { id: 'pause', label: 'Pause market', effect: 'recruitment_pause' },
+      ],
+    });
+  }
+  if (pressure.band === 'warning' || pressure.band === 'danger') {
+    agenda.push({
+      id: `S${state.season}-P${period}-agenda-supporter-path`,
+      type: 'chairman_agenda',
+      source: 'Chairman Agenda',
+      title: 'Public message',
+      body: 'The mood is getting louder. Do you speak, stay quiet, or put pressure on football staff?',
+      importance: pressure.band === 'danger' ? 3 : 2,
+      choices: [
+        { id: 'own', label: 'Own it', effect: 'supporter_own' },
+        { id: 'quiet', label: 'Stay quiet', effect: 'supporter_quiet' },
+        { id: 'staff', label: 'Pressure staff', effect: 'supporter_staff', risk: 'high' },
+      ],
+    });
+  }
+  return agenda.slice(0, 3);
 }
 
 function dedupeDecisions(decisions) {
@@ -1912,6 +2089,7 @@ function dedupeDecisions(decisions) {
 
 function decisionKey(decision) {
   if (!decision) return '';
+  if (decision.type === 'chairman_agenda') return decision.id;
   if (decision.type === 'renew_contract') {
     return `${state.season}:renew_contract:${decision.payload?.playerId || ''}`;
   }
