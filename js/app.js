@@ -34,7 +34,7 @@ import {
   infrastructureStory, seasonReviewStories, objectiveStory, injuryStory,
   cupStory, cupRoundStory, cupDrawStory, rivalTransferStory, clubsToWatchStory,
   managerAppointmentStory, managerDirectiveStory,
-  boardroomPolicyStory, directorAppointmentStory, managerMeetingStory, pressureStory,
+  boardroomPolicyStory, directorAppointmentStory, pressureStory,
   staffDecisionStory,
 } from './news.js';
 import {
@@ -73,8 +73,9 @@ const state = {
   objective: null,        // current league objective (see objectives.js)
   financeObjective: null, // advisory finance guardrail
   confidence: START_CONFIDENCE, // board confidence 0–100
-  badlyStreak: 0,         // consecutive "badly missed" seasons (two-strike sack rule)
-  jobStatus: 'secure',    // secure | watch | at_risk | sacked
+  badlyStreak: 0,         // consecutive "badly missed" seasons (two-strike forced-out rule)
+  jobStatus: 'secure',    // secure | watch | at_risk | forced_out
+  fanTrust: 60,           // supporter trust in the chairman, 0-100
   lastReview: null,       // last end-of-season board review (for the dashboard)
   lastMove: null,         // 'promoted' | 'relegated' | null — how we arrived this season
   inbox: [],              // season hub messages shown on the dashboard
@@ -124,6 +125,7 @@ function newGame(userClubId = 'solihull') {
   state.confidence = START_CONFIDENCE;
   state.badlyStreak = 0;
   state.jobStatus = 'secure';
+  state.fanTrust = 60;
   state.lastMove = null;
   state.lastReview = null;
   state.developmentReport = null;
@@ -446,6 +448,7 @@ function save() {
       confidence: state.confidence,
       badlyStreak: state.badlyStreak,
       jobStatus: state.jobStatus,
+      fanTrust: state.fanTrust,
       lastReview: state.lastReview,
       lastMove: state.lastMove,
       inbox: state.inbox,
@@ -492,6 +495,7 @@ function load() {
     state.confidence = data.confidence ?? START_CONFIDENCE;
     state.badlyStreak = data.badlyStreak ?? 0;
     state.jobStatus = data.jobStatus ?? 'secure';
+    state.fanTrust = data.fanTrust ?? 60;
     state.lastReview = data.lastReview ?? null;
     state.lastMove = data.lastMove ?? null;
     state.inbox = data.inbox ?? [];
@@ -1367,6 +1371,8 @@ function renderBoardroom() {
   const policy = RECRUITMENT_POLICIES[state.boardPlan.recruitmentPolicy] || RECRUITMENT_POLICIES.balanced;
   const priority = BUDGET_PRIORITIES[state.boardPlan.budgetPriority] || BUDGET_PRIORITIES.balanced;
   const candidates = state.directorMarket.length ? state.directorMarket : directorMarketForClub(club, state.season);
+  const managerOptions = managerStatementOptions({ club, pos, track, pressure });
+  const supporterOptions = supporterStatementOptions({ club, pos, track, pressure });
   state.directorMarket = candidates;
 
   document.getElementById('boardroom').innerHTML = `
@@ -1382,6 +1388,7 @@ function renderBoardroom() {
         <div class="mini-panel"><span class="muted small">Director of Football</span><strong>${club.director.name}</strong><small class="muted">${club.director.rating}/100 · ${RECRUITMENT_POLICIES[club.director.speciality]?.label || 'Balanced'}</small></div>
         <div class="mini-panel"><span class="muted small">Recruitment Brief</span><strong>${policy.label}</strong><small class="muted">${policy.text}</small></div>
         <div class="mini-panel"><span class="muted small">Budget Plan</span><strong>${priority.label}</strong><small class="muted">${priority.text}</small></div>
+        <div class="mini-panel"><span class="muted small">Supporter Trust</span><strong>${state.fanTrust}/100</strong><small class="muted">${supporterTrustLabel(state.fanTrust)}</small></div>
       </div>
       <p class="small ${bandClass(pressure.band)} mt">${pressure.text} Pressure score: ${pressure.score}/100.</p>
     </div>
@@ -1418,11 +1425,30 @@ function renderBoardroom() {
         <h2 class="mb0">Manager Performance Meeting</h2>
         <span class="muted small">${club.manager.name} · confidence ${club.manager.confidence ?? 60}/100</span>
       </div>
-      <p class="muted small mt">Meetings adjust manager confidence and create a news story. They are broad chairman actions, not match-by-match tactics.</p>
-      <div class="flex mt action-row">
-        <button class="btn btn-sm" data-manager-meeting="back">Publicly Back Manager</button>
-        <button class="btn-ghost btn-sm" data-manager-meeting="review">Hold Review Meeting</button>
-        <button class="btn-ghost btn-sm danger-action" data-manager-meeting="warn">Issue Warning</button>
+      <p class="muted small mt">Choose a chairman message that fits the league position and pressure. The manager reacts based on whether the demand feels fair.</p>
+      <div class="grid mt">
+        ${managerOptions.map(opt => `<div class="mini-panel">
+          <span class="muted small">${opt.tone}</span>
+          <strong>${opt.label}</strong>
+          <small class="muted">${opt.preview}</small>
+          <button class="btn-ghost btn-sm mt ${opt.risk === 'high' ? 'danger-action' : ''}" data-manager-meeting="${opt.id}">Say this</button>
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h2 class="mb0">Supporter Message</h2>
+        <span class="muted small">Trust ${state.fanTrust}/100 · ${pressure.label}</span>
+      </div>
+      <p class="muted small mt">Public statements can calm pressure, increase scrutiny, or shift anger between you and the manager.</p>
+      <div class="grid mt">
+        ${supporterOptions.map(opt => `<div class="mini-panel">
+          <span class="muted small">${opt.tone}</span>
+          <strong>${opt.label}</strong>
+          <small class="muted">${opt.preview}</small>
+          <button class="btn-ghost btn-sm mt ${opt.risk === 'high' ? 'danger-action' : ''}" data-supporter-message="${opt.id}">Release statement</button>
+        </div>`).join('')}
       </div>
     </div>
 
@@ -1459,7 +1485,10 @@ function renderBoardroom() {
     render();
   });
   document.querySelectorAll('[data-manager-meeting]').forEach(btn => {
-    btn.addEventListener('click', () => holdManagerMeeting(btn.dataset.managerMeeting, pressure));
+    btn.addEventListener('click', () => holdManagerMeeting(btn.dataset.managerMeeting, { club, pos, track, pressure }));
+  });
+  document.querySelectorAll('[data-supporter-message]').forEach(btn => {
+    btn.addEventListener('click', () => addressSupporters(btn.dataset.supporterMessage, { club, pos, track, pressure }));
   });
   document.getElementById('refreshDirectors').addEventListener('click', () => {
     state.directorMarket = directorMarketForClub(club, state.season);
@@ -1471,15 +1500,176 @@ function renderBoardroom() {
   bindDecisionButtons();
 }
 
-function holdManagerMeeting(action, pressure) {
+function managerStatementOptions({ club, pos, track, pressure }) {
+  const played = club.played;
+  const size = state.objective?.divisionSize || divisionStandings(state.league.clubs, club.division).length;
+  const targetPos = state.objective?.targetPos || Math.ceil(size / 2);
+  const nearTop = pos <= Math.max(2, Math.ceil(size * 0.35));
+  const early = played <= 5;
+  const offTrack = track.state === 'offtrack';
+  const options = [
+    {
+      id: 'fully_behind',
+      tone: 'Backing',
+      label: 'I am fully behind you.',
+      preview: 'Calms the coach and dressing room, but supporters may judge you if form is poor.',
+      managerDelta: 8,
+      boardDelta: offTrack ? -2 : 1,
+      fanDelta: offTrack ? -3 : 2,
+    },
+    {
+      id: 'keep_it_up',
+      tone: 'Praise',
+      label: 'Keep it up, this is the standard.',
+      preview: 'Rewards good work without changing expectations.',
+      managerDelta: 5,
+      boardDelta: 1,
+      fanDelta: 1,
+      show: track.state === 'ontrack' || pos <= targetPos,
+    },
+    {
+      id: 'need_improvement',
+      tone: 'Challenge',
+      label: 'We need to see improvement.',
+      preview: 'Fair pressure when results are drifting.',
+      managerDelta: offTrack ? -3 : 1,
+      boardDelta: 2,
+      fanDelta: 1,
+    },
+    {
+      id: 'promotion_push',
+      tone: 'Ambition',
+      label: 'We should be pushing for promotion.',
+      preview: 'Raises ambition if the table makes it credible.',
+      managerDelta: nearTop || early ? 2 : -5,
+      boardDelta: nearTop ? 2 : -1,
+      fanDelta: nearTop ? 3 : -2,
+      show: nearTop || early || targetPos <= 3,
+    },
+    {
+      id: 'title_push',
+      tone: 'High ambition',
+      label: 'We should be pushing for the league.',
+      preview: 'Only realistic when you are in the race or it is very early.',
+      managerDelta: pos <= 2 ? 3 : -6,
+      boardDelta: pos <= 2 ? 2 : -2,
+      fanDelta: pos <= 2 ? 4 : -3,
+      risk: pos > 2 ? 'high' : 'normal',
+      show: pos <= 3 || (early && targetPos <= 2),
+    },
+  ];
+  return options.filter(opt => opt.show !== false && !(pressure.band === 'danger' && opt.id === 'keep_it_up'));
+}
+
+function supporterStatementOptions({ club, pos, track, pressure }) {
+  const offTrack = track.state === 'offtrack';
+  const options = [
+    {
+      id: 'trust_plan',
+      tone: 'Calm',
+      label: 'Trust the plan.',
+      preview: 'Asks for patience and slightly steadies board confidence.',
+      fanDelta: offTrack ? -1 : 4,
+      boardDelta: 2,
+      managerDelta: 1,
+    },
+    {
+      id: 'back_manager_public',
+      tone: 'Backing',
+      label: 'I fully back the manager.',
+      preview: 'Protects the coach, but puts your judgement in the spotlight.',
+      fanDelta: offTrack ? -4 : 2,
+      boardDelta: offTrack ? -1 : 1,
+      managerDelta: 6,
+      risk: offTrack ? 'high' : 'normal',
+    },
+    {
+      id: 'own_results',
+      tone: 'Accountability',
+      label: 'Results must improve and I take responsibility.',
+      preview: 'Usually lands well with supporters during poor runs.',
+      fanDelta: pressure.band === 'danger' ? 6 : 3,
+      boardDelta: 1,
+      managerDelta: -1,
+    },
+    {
+      id: 'demand_support',
+      tone: 'Confrontational',
+      label: 'Support your team and stop complaining.',
+      preview: 'May briefly project authority, but can inflame a restless fanbase.',
+      fanDelta: pressure.band === 'danger' ? -10 : -5,
+      boardDelta: -2,
+      managerDelta: 2,
+      risk: 'high',
+      show: pressure.band !== 'safe',
+    },
+  ];
+  return options.filter(opt => opt.show !== false);
+}
+
+function holdManagerMeeting(action, context) {
   const club = userClub();
   const manager = club.manager;
   if (!manager) return;
-  const delta = action === 'back' ? 6 : action === 'warn' ? -8 : pressure.band === 'danger' ? -3 : 2;
-  manager.confidence = Math.max(20, Math.min(95, (manager.confidence ?? 60) + delta));
+  const option = managerStatementOptions(context).find(opt => opt.id === action);
+  if (!option) return;
+  manager.confidence = clampScore((manager.confidence ?? 60) + option.managerDelta);
+  state.confidence = clampScore(state.confidence + option.boardDelta);
+  state.fanTrust = clampScore((state.fanTrust ?? 60) + option.fanDelta);
   state.boardPlan.lastManagerMeeting = { action, week: state.currentWeek, season: state.season };
-  addStory(managerMeetingStory(club, manager, action, pressure));
+  const reaction = managerReactionText(option, manager);
+  addStory({
+    title: `${club.short}: chairman speaks with ${manager.name}`,
+    body: `"${option.label}" ${reaction} Manager confidence is now ${manager.confidence}/100.`,
+    type: option.managerDelta < 0 ? 'result-bad' : 'board',
+    category: 'Manager',
+    importance: option.risk === 'high' ? 2 : 1,
+  });
+  alert(`${manager.name}: ${reaction}\n\nManager confidence ${manager.confidence}/100\nBoard confidence ${state.confidence}/100\nSupporter trust ${state.fanTrust}/100`);
   render();
+}
+
+function addressSupporters(action, context) {
+  const club = userClub();
+  const manager = club.manager;
+  const option = supporterStatementOptions(context).find(opt => opt.id === action);
+  if (!option) return;
+  state.fanTrust = clampScore((state.fanTrust ?? 60) + option.fanDelta);
+  state.confidence = clampScore(state.confidence + option.boardDelta);
+  if (manager) manager.confidence = clampScore((manager.confidence ?? 60) + option.managerDelta);
+  const reaction = supporterReactionText(option, context.pressure);
+  addStory({
+    title: `${club.short} chairman addresses supporters`,
+    body: `"${option.label}" ${reaction} Supporter trust is now ${state.fanTrust}/100.`,
+    type: option.fanDelta < 0 ? 'result-bad' : 'board',
+    category: 'Supporters',
+    importance: option.risk === 'high' ? 2 : 1,
+  });
+  alert(`Supporter reaction: ${reaction}\n\nSupporter trust ${state.fanTrust}/100\nBoard confidence ${state.confidence}/100`);
+  render();
+}
+
+function managerReactionText(option, manager) {
+  if (option.managerDelta >= 6) return `${manager.name} welcomes the backing and feels trusted to continue the work.`;
+  if (option.managerDelta >= 2) return `${manager.name} accepts the ambition as realistic and useful.`;
+  if (option.managerDelta >= 0) return `${manager.name} sees it as a fair chairman message.`;
+  if (option.managerDelta <= -6) return `${manager.name} feels the demand is unrealistic and privately pushes back.`;
+  return `${manager.name} accepts the challenge, but pressure in the office rises.`;
+}
+
+function supporterReactionText(option, pressure) {
+  if (option.fanDelta >= 5) return 'The message lands well because it acknowledges the mood and asks for improvement.';
+  if (option.fanDelta > 0) return 'Most supporters accept the tone for now.';
+  if (option.fanDelta <= -8) return 'The statement angers supporters and increases pressure on the chairman.';
+  if (pressure.band === 'danger') return 'Supporters remain unconvinced while results are poor.';
+  return 'The fanbase is split, but the statement does not create a major backlash.';
+}
+
+function supporterTrustLabel(score) {
+  if (score >= 75) return 'Strong backing';
+  if (score >= 50) return 'Patient';
+  if (score >= 30) return 'Restless';
+  return 'Revolt risk';
 }
 
 function hireDirector(id) {
@@ -1517,6 +1707,7 @@ function approveDecision(id) {
   }
   if (decision.type === 'pressure_response') {
     state.confidence = Math.min(100, state.confidence + 3);
+    state.fanTrust = clampScore((state.fanTrust ?? 60) + 3);
   }
   if (decision.type === 'renew_contract') {
     const player = club.players.find(p => p.id === decision.payload.playerId);
@@ -1544,13 +1735,19 @@ function dismissDecision(id) {
 function currentPressure(club, pos, track) {
   const history = state.clubHistory || createClubHistory(club);
   const latest = history.seasons?.at(-1) || null;
-  return pressureSnapshot({
+  const base = pressureSnapshot({
     club,
     position: pos,
     objective: state.objective,
     track,
     fanMood: fanMood(history, state.confidence, latest),
   });
+  const trust = state.fanTrust ?? 60;
+  const score = clampScore(base.score + (trust < 30 ? 14 : trust < 50 ? 7 : trust >= 75 ? -6 : 0));
+  if (score >= 75) return { score, label: 'High pressure', band: 'danger', text: 'Supporters and media expect a visible response.' };
+  if (score >= 52) return { score, label: 'Building pressure', band: 'warning', text: 'The mood is watchful, but still manageable.' };
+  if (score >= 30) return { score, label: 'Normal scrutiny', band: 'ok', text: 'The club is under ordinary week-to-week attention.' };
+  return { score, label: 'Calm', band: 'safe', text: 'Results, expectations, and supporter trust are giving the board room to plan.' };
 }
 
 function generateDecisionReports(reason = 'routine') {
@@ -2514,6 +2711,31 @@ function driftManagerConfidence(club, delta) {
   club.manager.confidence = Math.max(20, Math.min(95, (club.manager.confidence ?? 60) + delta));
 }
 
+function chairmanExitScenario({ club, review, finalPos, divisionName }) {
+  if ((state.fanTrust ?? 60) < 25) {
+    return {
+      title: 'Fan Revolt',
+      body: `Supporter trust has collapsed after finishing ${finalPos}${ord(finalPos)} in ${divisionName}. Protests are calling for you to stand down as chairman of ${club.name}.`,
+    };
+  }
+  if (club.cash < 0 || review.confidence < 8) {
+    return {
+      title: 'Investor Takeover Pressure',
+      body: `A foreign investor group is circling ${club.name}, arguing that poor results and weak finances require new ownership leadership.`,
+    };
+  }
+  if (state.badlyStreak >= 2) {
+    return {
+      title: 'Board Forces Resignation Vote',
+      body: `The board believes a prolonged period of poor performance has damaged the club. They ask you to resign before a formal vote of no confidence.`,
+    };
+  }
+  return {
+    title: 'Chairman Position Untenable',
+    body: `The board and supporter groups believe the club needs a reset after repeated underperformance.`,
+  };
+}
+
 function onNewSeason() {
   if (state.cup?.status === 'active') {
     alert('Finish the active Chairman Cup before starting the next season.');
@@ -2538,10 +2760,11 @@ function onNewSeason() {
   const oldDivName = DIVISIONS[uc.division].name;
 
   // 2a. Grade the board objective for the season just played, then update
-  //     board confidence and job status (transparent two-strike sack rule).
+  //     board confidence and job status (transparent two-strike forced-out rule).
   const grading = gradeLeagueObjective(state.objective, finalPos);
   const review = applyConfidence(state.confidence, grading.delta, grading.grade, state.badlyStreak);
   state.confidence = review.confidence;
+  state.fanTrust = clampScore((state.fanTrust ?? 60) + (grading.grade === 'exceeded' ? 8 : grading.grade === 'met' ? 4 : grading.grade === 'badly' ? -14 : -6));
   state.badlyStreak = review.badlyStreak;
   state.jobStatus = review.status;
   state.lastReview = { grade: grading.grade, message: grading.message, jobMessage: review.jobMessage };
@@ -2565,23 +2788,36 @@ function onNewSeason() {
     summary: `Revenue £${fmt(pnl.revenue.total)}, costs £${fmt(pnl.costs.total)}, net ${pnl.profit + bonus >= 0 ? '+' : '−'}£${fmt(Math.abs(pnl.profit + bonus))}. Balance now £${fmt(uc.cash)}.`,
   };
 
-  // 3b. If the board sacked the manager, end the game cleanly here.
+  // 3b. If ownership pressure becomes untenable, the chairman is challenged.
   if (review.sacked) {
-    alert(
+    const exit = chairmanExitScenario({ club: uc, review, finalPos, divisionName: oldDivName });
+    const acceptExit = confirm(
       `Season ${state.season} review\n\n` +
       `${grading.message}\n\n` +
-      `🔴 SACKED\n${review.jobMessage}\n\n` +
-      `You finished ${finalPos}${ord(finalPos)} in ${oldDivName} with board confidence at ${review.confidence}/100.`
+      `${exit.title}\n${exit.body}\n\n` +
+      `You finished ${finalPos}${ord(finalPos)} in ${oldDivName}. Board confidence is ${review.confidence}/100 and supporter trust is ${state.fanTrust}/100.\n\n` +
+      `Accept the exit and start a new game? Choose Cancel to refuse and continue under emergency review.`
     );
-    if (confirm('Start a new game with a fresh club?')) {
+    if (acceptExit) {
       localStorage.removeItem(SAVE_KEY);
       showClubSelection();
       return;
     }
-    state.currentTab = 'dashboard';
-    document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'dashboard'));
-    render();
-    return;
+    state.confidence = Math.max(10, Math.min(25, review.confidence + 5));
+    state.fanTrust = Math.max(10, Math.min(35, state.fanTrust + 3));
+    state.badlyStreak = 1;
+    state.jobStatus = 'at_risk';
+    review.confidence = state.confidence;
+    review.status = 'at_risk';
+    review.jobMessage = 'You refused to resign. The board allows one emergency review period, but patience is almost gone.';
+    review.sacked = false;
+    addStory({
+      title: `${uc.short} chairman refuses to stand down`,
+      body: `${exit.body} The chairman rejects the pressure and continues under emergency review.`,
+      type: 'result-bad',
+      category: 'Boardroom',
+      importance: 3,
+    });
   }
 
   // 4. Promotion & relegation across the whole pyramid.

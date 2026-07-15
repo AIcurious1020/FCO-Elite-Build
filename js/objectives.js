@@ -7,14 +7,14 @@
 //     exact finishing position vs the target shown.
 //   - Job security is NEVER a surprise: board confidence is a visible 0–100 bar.
 //     One bad season warns; it takes TWO consecutive "badly missed" seasons to
-//     trigger a sacking, and the warning is signposted a full season ahead.
+//     trigger forced-out pressure, and the warning is signposted a full season ahead.
 //   - No death spiral: a good recovery season immediately restores confidence.
 
 import { DIVISIONS, TOP_DIVISION, BOTTOM_DIVISION } from './data.js';
 import { divisionStandings } from './pyramid.js';
 
 export const START_CONFIDENCE = 60;   // board confidence at game start (0–100)
-export const SACK_THRESHOLD = 15;     // below this after a bad season → sacked
+export const SACK_THRESHOLD = 15;     // below this after a bad season → forced-out pressure
 
 // Objective "kinds" — each maps a division context to a target finishing rank.
 // targetPos = the WORST acceptable finishing position (<= means success).
@@ -121,7 +121,7 @@ export function gradeLeagueObjective(objective, finalPos) {
 }
 
 /**
- * Apply a confidence change (clamped 0–100) and compute the resulting job status.
+ * Apply a confidence change (clamped 0–100) and compute the resulting chairman status.
  * badlyMissedStreak tracks consecutive "badly" grades for the two-strike rule.
  */
 export function applyConfidence(confidence, delta, grade, badlyStreak) {
@@ -133,13 +133,13 @@ export function applyConfidence(confidence, delta, grade, badlyStreak) {
   let sacked = false;
 
   if (streak >= 2 || next < SACK_THRESHOLD) {
-    // Two consecutive disasters, OR confidence collapsed — the board acts.
+    // Two consecutive disasters, OR confidence collapsed — ownership pressure escalates.
     sacked = true;
-    status = 'sacked';
-    jobMessage = 'The board has lost patience and terminated your contract.';
+    status = 'forced_out';
+    jobMessage = 'Your position as chairman is under formal pressure after a prolonged failure to improve.';
   } else if (next < 30 || grade === 'badly') {
     status = 'at_risk';
-    jobMessage = 'The board is unhappy. Deliver next season or your job is at risk.';
+    jobMessage = 'The board is unhappy. Deliver next season or your chairmanship is at risk.';
   } else if (next < 50) {
     status = 'watch';
     jobMessage = 'The board expects improvement.';
