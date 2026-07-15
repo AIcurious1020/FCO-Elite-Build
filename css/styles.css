@@ -30,14 +30,14 @@ body {
   z-index: 10;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
-  padding: 12px 20px 0;
+  padding: 12px 20px;
 }
 
 .header-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  gap: 12px;
 }
 
 .header h1 {
@@ -58,35 +58,18 @@ body {
 .club-name { font-weight: 600; font-size: 14px; }
 .club-cash { color: var(--accent-2); font-weight: 700; font-size: 16px; }
 
-.top-nav {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.top-nav::-webkit-scrollbar { display: none; }
-
-.top-nav button {
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--muted);
-  padding: 10px 14px;
+.header-home {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 14px;
-  white-space: nowrap;
-  transition: color .15s, border-color .15s;
+  font-size: 13px;
+  font-weight: 700;
 }
-.top-nav button:hover { color: var(--text); }
-.top-nav button.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
-}
-.top-nav button.needs-attention {
-  color: var(--danger);
-  border-bottom-color: rgba(255,95,111,0.55);
-}
+.header-home:hover { border-color: var(--accent); }
+.header-home.needs-attention { border-color: rgba(255,95,111,0.60); color: var(--danger); }
 .nav-badge {
   display: inline-flex;
   align-items: center;
@@ -101,7 +84,7 @@ body {
   font-size: 11px;
   font-weight: 800;
 }
-.top-nav button:disabled {
+.header-home:disabled {
   opacity: .35;
   cursor: not-allowed;
 }
@@ -222,6 +205,51 @@ body {
 .health-tile.success .health-copy strong { color: var(--accent-2); }
 .health-tile.warning .health-copy strong { color: var(--warning); }
 .health-tile.danger .health-copy strong { color: var(--danger); }
+
+.dashboard-hub {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.hub-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 70px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.hub-card:hover { border-color: rgba(79,138,255,0.55); }
+.hub-card.success { border-color: rgba(53,208,127,0.38); }
+.hub-card.warning { border-color: rgba(255,180,84,0.45); }
+.hub-card.danger { border-color: rgba(255,95,111,0.50); }
+.hub-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.hub-card strong,
+.hub-card small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hub-card small {
+  color: var(--muted);
+  margin-top: 2px;
+  font-size: 12px;
+}
 
 .alert-strip {
   display: grid;
@@ -692,6 +720,8 @@ select, input {
 
 @media (max-width: 600px) {
   .header h1 { font-size: 18px; }
+  .header-top { align-items: flex-start; }
+  .club-badge { margin-left: auto; }
   .main { padding: 14px; }
   .stat span { font-size: 16px; }
   th, td { padding: 7px 5px; font-size: 12px; }
@@ -700,6 +730,8 @@ select, input {
   .chairman-brief .btn { width: 100%; }
   .health-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .health-tile { grid-template-columns: 1fr; min-height: 86px; }
+  .dashboard-hub { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hub-card { grid-template-columns: 1fr; min-height: 84px; }
   .dashboard-alert { grid-template-columns: 28px 1fr; }
   .dashboard-alert .btn-ghost { grid-column: 2; justify-self: start; }
   .dashboard-main,

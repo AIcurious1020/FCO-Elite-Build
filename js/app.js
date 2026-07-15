@@ -161,7 +161,6 @@ function showClubSelection() {
   state.currentTab = 'dashboard';
   setNavEnabled(false);
   document.querySelectorAll('.tab-content').forEach(s => { s.hidden = s.id !== 'dashboard'; });
-  document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'dashboard'));
   updateNavDecisionBadge();
   document.getElementById('headerClubName').textContent = 'Choose your club';
   document.getElementById('headerCash').textContent = 'New career';
@@ -589,35 +588,33 @@ function deserialiseClub(d) {
 /* Navigation                                                         */
 /* ------------------------------------------------------------------ */
 function setupTabs() {
-  document.querySelectorAll('[data-tab]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      switchTab(btn.dataset.tab);
-    });
-  });
+  const headerHome = document.getElementById('headerHome');
+  if (headerHome) headerHome.addEventListener('click', () => switchTab('dashboard'));
 }
 
 function switchTab(tab) {
   if (!state.league) return;
   state.currentTab = tab;
-  document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   updateNavDecisionBadge();
   render();
 }
 
 function setNavEnabled(enabled) {
-  document.querySelectorAll('[data-tab]').forEach(btn => {
-    btn.disabled = !enabled && btn.dataset.tab !== 'dashboard';
-  });
+  const headerHome = document.getElementById('headerHome');
+  if (headerHome) {
+    headerHome.disabled = !enabled;
+    headerHome.hidden = true;
+  }
 }
 
 function updateNavDecisionBadge() {
-  const btn = document.getElementById('boardroomNav');
+  const btn = document.getElementById('headerHome');
   if (!btn) return;
   const count = state.league ? (state.decisions || []).length : 0;
-  btn.classList.toggle('needs-attention', count > 0);
-  btn.innerHTML = count > 0
-    ? `Boardroom <span class="nav-badge">${count}</span>`
-    : 'Boardroom';
+  btn.classList.toggle('needs-attention', count > 0 && state.currentTab !== 'dashboard');
+  btn.innerHTML = count > 0 && state.currentTab !== 'dashboard'
+    ? `Dashboard <span class="nav-badge">${count}</span>`
+    : 'Dashboard';
 }
 
 function setupGlobalButtons() {
@@ -646,6 +643,8 @@ function render() {
   const club = userClub();
   document.getElementById('headerClubName').textContent = club.name;
   document.getElementById('headerCash').textContent = '£' + fmt(club.cash);
+  const headerHome = document.getElementById('headerHome');
+  if (headerHome) headerHome.hidden = state.currentTab === 'dashboard';
   updateNavDecisionBadge();
 
   document.querySelectorAll('.tab-content').forEach(s => { s.hidden = s.id !== state.currentTab; });
@@ -715,6 +714,8 @@ function renderDashboard() {
       ${renderHealthTile({ icon: '📋', label: 'Decisions', value: `${state.decisions.length}`, sub: state.decisions.length ? 'Pending' : 'Clear', band: state.decisions.length ? 'danger' : 'safe', tab: 'boardroom' })}
     </div>
 
+    ${renderDashboardHub({ club, pos, forecast, contractRisks, injuries, nextEvent })}
+
     ${renderDashboardAlerts({ pressure, contractRisks, injuries, track })}
 
     ${state.decisions.length ? renderDecisionInbox(true) : ''}
@@ -770,6 +771,33 @@ function renderDashboard() {
     btn.addEventListener('click', () => switchTab(btn.dataset.dashboardTab));
   });
   bindDecisionButtons();
+}
+
+function renderDashboardHub({ club, pos, forecast, contractRisks, injuries, nextEvent }) {
+  const dealCount = dealRoomTargets(club).length;
+  const cupLabel = state.cup?.status === 'complete' ? 'Complete' : cupCurrentRound(state.cup)?.name || 'Scheduled';
+  const areas = [
+    { tab: 'boardroom', icon: '📋', label: 'Boardroom', value: state.decisions.length ? `${state.decisions.length} pending` : 'Clear', band: state.decisions.length ? 'danger' : 'safe' },
+    { tab: 'squad', icon: '👕', label: 'Squad', value: injuries.length ? `${injuries.length} unavailable` : contractRisks.length ? `${contractRisks.length} contracts` : 'Available', band: injuries.length || contractRisks.length ? 'warning' : 'safe' },
+    { tab: 'transfers', icon: '🤝', label: 'Deal Room', value: dealCount ? `${dealCount} proposal${dealCount === 1 ? '' : 's'}` : 'No approval', band: dealCount ? 'warning' : 'ok' },
+    { tab: 'fixtures', icon: '📅', label: 'Fixtures', value: nextEvent?.date || 'Season complete', band: nextEvent ? 'ok' : 'safe' },
+    { tab: 'table', icon: '🏆', label: 'Table', value: `${pos}${ord(pos)} place`, band: 'ok' },
+    { tab: 'finance', icon: '🏟', label: 'Finance', value: forecast.risk === 'safe' ? 'Stable' : forecast.risk, band: forecast.risk === 'danger' ? 'danger' : forecast.risk === 'warning' ? 'warning' : 'safe' },
+    { tab: 'manager', icon: '🧢', label: 'Manager', value: club.manager ? `${club.manager.confidence ?? 60}% confidence` : 'Vacant', band: (club.manager?.confidence ?? 60) < 45 ? 'warning' : 'ok' },
+    { tab: 'news', icon: '📰', label: 'News', value: `${state.inbox.length} stories`, band: 'ok' },
+    { tab: 'club', icon: '💼', label: 'Club', value: `${state.confidence}% board`, band: scoreBand(state.confidence) },
+    { tab: 'cup', icon: '🏅', label: 'Cup', value: cupLabel, band: state.cup?.status === 'complete' ? 'safe' : 'ok' },
+    { tab: 'stadium', icon: '🏗', label: 'Stadium', value: `${fmt(club.stadiumCapacity)} seats`, band: 'ok' },
+  ];
+  return `<div class="dashboard-hub">
+    ${areas.map(area => `<button class="hub-card ${bandClass(area.band)}" data-dashboard-tab="${area.tab}">
+      <span class="hub-icon">${area.icon}</span>
+      <span>
+        <strong>${area.label}</strong>
+        <small>${area.value}</small>
+      </span>
+    </button>`).join('')}
+  </div>`;
 }
 
 function renderChairmanBrief({ club, pos, track, pressure, nextEvent, preview }) {
@@ -3529,7 +3557,6 @@ function onNewSeason() {
   if (state.cup?.status === 'active') {
     alert('Finish the active Chairman Cup before starting the next season.');
     state.currentTab = 'cup';
-    document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'cup'));
     render();
     return;
   }
@@ -3715,7 +3742,6 @@ function onNewSeason() {
   );
 
   state.currentTab = 'dashboard';
-  document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'dashboard'));
   render();
 }
 
