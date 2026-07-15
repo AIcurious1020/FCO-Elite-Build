@@ -15,7 +15,7 @@ A web-first football club management sim inspired by Football Chairman Pro 2, re
 |-----|--------------|
 | Dashboard | Icon-led club health, decisions, alerts, next fixture, and latest headlines |
 | News | Season stories covering results, transfers, injuries, cups, and rival activity |
-| Club | Club identity, history, honours, records, and fan mood |
+| Club | Club identity, chairman profile, history, honours, records, and fan mood |
 | Boardroom | Deduped decision inbox, Director of Football, recruitment policy, contract renewals, budget priority, manager statements, supporter messaging, fan/media pressure |
 | Squad | Full squad with position-weighted overalls, best-XI highlighting, contract status, manager player views, sell players |
 | Manager | Hire/replace the head coach, set chairman instructions, and review tactical output |

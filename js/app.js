@@ -92,6 +92,7 @@ const state = {
   directorMarket: [],
   boardPlan: defaultBoardPlan(),
   decisions: [],
+  chairmanProfile: null,
 };
 
 /* ------------------------------------------------------------------ */
@@ -118,6 +119,7 @@ function newGame(userClubId = 'solihull') {
   state.currentWeek = 0;
   state.season = 1;
   state.boardPlan = defaultBoardPlan();
+  state.chairmanProfile = defaultChairmanProfile();
   ensureClubStaff(lg.clubs, state.season);
   state.market = guidedMarket(uc);
   state.lastResults = [];
@@ -465,6 +467,7 @@ function save() {
       directorMarket: state.directorMarket,
       boardPlan: state.boardPlan,
       decisions: state.decisions,
+      chairmanProfile: state.chairmanProfile,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -510,6 +513,7 @@ function load() {
     state.managerMarket = data.managerMarket ?? availableManagersForClub(clubsById[data.userClubId], data.season || 1);
     state.directorMarket = data.directorMarket ?? directorMarketForClub(clubsById[data.userClubId], data.season || 1);
     state.boardPlan = { ...defaultBoardPlan(), ...(data.boardPlan || {}) };
+    state.chairmanProfile = normaliseChairmanProfile(data.chairmanProfile);
     state.decisions = dedupeDecisions((data.decisions ?? []).map(enrichDecisionReport));
     syncSeasonCalendar();
     state.currentEvent = nextCalendarIndex();
@@ -1009,6 +1013,75 @@ function watchClubCard(label, club) {
   </div>`;
 }
 
+function defaultChairmanProfile() {
+  return {
+    patience: 50,
+    ambition: 50,
+    prudence: 50,
+    youth: 50,
+    supporter: 50,
+    delegation: 50,
+    actions: 0,
+  };
+}
+
+function normaliseChairmanProfile(profile) {
+  return { ...defaultChairmanProfile(), ...(profile || {}) };
+}
+
+function applyChairmanTrait(delta = {}) {
+  state.chairmanProfile = normaliseChairmanProfile(state.chairmanProfile);
+  Object.entries(delta).forEach(([key, value]) => {
+    if (key === 'actions') return;
+    state.chairmanProfile[key] = clampScore((state.chairmanProfile[key] ?? 50) + value);
+  });
+  state.chairmanProfile.actions = (state.chairmanProfile.actions || 0) + 1;
+}
+
+function chairmanProfileSummary(profile = state.chairmanProfile) {
+  const p = normaliseChairmanProfile(profile);
+  const pairs = [
+    { key: 'ambition', high: 'Ambitious', low: 'Measured' },
+    { key: 'prudence', high: 'Prudent', low: 'Aggressive spender' },
+    { key: 'patience', high: 'Patient', low: 'Ruthless' },
+    { key: 'youth', high: 'Developer', low: 'Short-term builder' },
+    { key: 'supporter', high: 'Fan-first', low: 'Boardroom-first' },
+    { key: 'delegation', high: 'Delegator', low: 'Hands-on' },
+  ].map(item => {
+    const value = p[item.key] ?? 50;
+    return { ...item, value, lean: value >= 50 ? item.high : item.low, strength: Math.abs(value - 50) };
+  }).sort((a, b) => b.strength - a.strength);
+  const primary = pairs[0].strength >= 8 ? pairs[0].lean : 'Balanced';
+  const secondary = pairs[1].strength >= 12 ? pairs[1].lean : 'Club-first';
+  return {
+    label: `${primary} ${secondary} Chairman`,
+    text: p.actions
+      ? `Your identity is emerging from ${p.actions} chairman decisions. Staff, supporters, and future stories will read these tendencies.`
+      : 'Your ownership identity will emerge from decisions you make, not from a setup choice.',
+    traits: pairs,
+  };
+}
+
+function renderChairmanProfile() {
+  const summary = chairmanProfileSummary();
+  return `<div class="card">
+    <div class="flex-between">
+      <div>
+        <h2 class="mb0">Chairman Profile</h2>
+        <p class="muted small">${summary.text}</p>
+      </div>
+      <span class="pill obj-pending">${summary.label}</span>
+    </div>
+    <div class="grid mt">
+      ${summary.traits.map(t => `<div class="mini-panel">
+        <span class="muted small">${t.lean}</span>
+        <strong>${t.value}/100</strong>
+        <div class="bar mt"><div class="bar-fill ${t.value >= 65 ? 'green' : t.value <= 35 ? '' : 'blue'}" style="width:${t.value}%;${t.value <= 35 ? 'background:var(--warning)' : ''}"></div></div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
 /* ---------- Club Profile ---------- */
 function renderClubProfile() {
   const club = userClub();
@@ -1036,6 +1109,8 @@ function renderClubProfile() {
         <div class="stat"><strong>Record Balance</strong><span>£${fmt(records.highestBalance || club.cash)}</span></div>
       </div>
     </div>
+
+    ${renderChairmanProfile()}
 
     <div class="grid">
       <div class="card mb0">
@@ -1374,6 +1449,7 @@ function renderBoardroom() {
   const candidates = state.directorMarket.length ? state.directorMarket : directorMarketForClub(club, state.season);
   const managerOptions = managerStatementOptions({ club, pos, track, pressure });
   const supporterOptions = supporterStatementOptions({ club, pos, track, pressure });
+  const chairmanSummary = chairmanProfileSummary();
   state.directorMarket = candidates;
 
   document.getElementById('boardroom').innerHTML = `
@@ -1390,6 +1466,7 @@ function renderBoardroom() {
         <div class="mini-panel"><span class="muted small">Recruitment Brief</span><strong>${policy.label}</strong><small class="muted">${policy.text}</small></div>
         <div class="mini-panel"><span class="muted small">Budget Plan</span><strong>${priority.label}</strong><small class="muted">${priority.text}</small></div>
         <div class="mini-panel"><span class="muted small">Supporter Trust</span><strong>${state.fanTrust}/100</strong><small class="muted">${supporterTrustLabel(state.fanTrust)}</small></div>
+        <div class="mini-panel"><span class="muted small">Chairman Style</span><strong>${chairmanSummary.label}</strong><small class="muted">${state.chairmanProfile?.actions || 0} tracked decisions</small></div>
       </div>
       <p class="small ${bandClass(pressure.band)} mt">${pressure.text} Pressure score: ${pressure.score}/100.</p>
     </div>
@@ -1476,12 +1553,14 @@ function renderBoardroom() {
 
   document.getElementById('recruitmentPolicy').addEventListener('change', e => {
     state.boardPlan.recruitmentPolicy = e.target.value;
+    applyChairmanTrait(traitsForRecruitmentPolicy(e.target.value));
     state.market = guidedMarket(club);
     addStory(boardroomPolicyStory(club, RECRUITMENT_POLICIES[state.boardPlan.recruitmentPolicy], BUDGET_PRIORITIES[state.boardPlan.budgetPriority]));
     render();
   });
   document.getElementById('budgetPriority').addEventListener('change', e => {
     state.boardPlan.budgetPriority = e.target.value;
+    applyChairmanTrait(traitsForBudgetPriority(e.target.value));
     addStory(boardroomPolicyStory(club, RECRUITMENT_POLICIES[state.boardPlan.recruitmentPolicy], BUDGET_PRIORITIES[state.boardPlan.budgetPriority]));
     render();
   });
@@ -1517,6 +1596,7 @@ function managerStatementOptions({ club, pos, track, pressure }) {
       managerDelta: 8,
       boardDelta: offTrack ? -2 : 1,
       fanDelta: offTrack ? -3 : 2,
+      traits: { patience: 5, supporter: 1 },
     },
     {
       id: 'keep_it_up',
@@ -1526,6 +1606,7 @@ function managerStatementOptions({ club, pos, track, pressure }) {
       managerDelta: 5,
       boardDelta: 1,
       fanDelta: 1,
+      traits: { patience: 3, delegation: 2 },
       show: track.state === 'ontrack' || pos <= targetPos,
     },
     {
@@ -1536,6 +1617,7 @@ function managerStatementOptions({ club, pos, track, pressure }) {
       managerDelta: offTrack ? -3 : 1,
       boardDelta: 2,
       fanDelta: 1,
+      traits: { ambition: 2, patience: -1 },
     },
     {
       id: 'promotion_push',
@@ -1545,6 +1627,7 @@ function managerStatementOptions({ club, pos, track, pressure }) {
       managerDelta: nearTop || early ? 2 : -5,
       boardDelta: nearTop ? 2 : -1,
       fanDelta: nearTop ? 3 : -2,
+      traits: { ambition: 5, prudence: -1 },
       show: nearTop || early || targetPos <= 3,
     },
     {
@@ -1556,6 +1639,7 @@ function managerStatementOptions({ club, pos, track, pressure }) {
       boardDelta: pos <= 2 ? 2 : -2,
       fanDelta: pos <= 2 ? 4 : -3,
       risk: pos > 2 ? 'high' : 'normal',
+      traits: { ambition: 7, prudence: -2 },
       show: pos <= 3 || (early && targetPos <= 2),
     },
   ];
@@ -1573,6 +1657,7 @@ function supporterStatementOptions({ club, pos, track, pressure }) {
       fanDelta: offTrack ? -1 : 4,
       boardDelta: 2,
       managerDelta: 1,
+      traits: { patience: 2, supporter: 4 },
     },
     {
       id: 'back_manager_public',
@@ -1583,6 +1668,7 @@ function supporterStatementOptions({ club, pos, track, pressure }) {
       boardDelta: offTrack ? -1 : 1,
       managerDelta: 6,
       risk: offTrack ? 'high' : 'normal',
+      traits: { patience: 4, delegation: 2 },
     },
     {
       id: 'own_results',
@@ -1592,6 +1678,7 @@ function supporterStatementOptions({ club, pos, track, pressure }) {
       fanDelta: pressure.band === 'danger' ? 6 : 3,
       boardDelta: 1,
       managerDelta: -1,
+      traits: { supporter: 5, patience: 1 },
     },
     {
       id: 'demand_support',
@@ -1602,6 +1689,7 @@ function supporterStatementOptions({ club, pos, track, pressure }) {
       boardDelta: -2,
       managerDelta: 2,
       risk: 'high',
+      traits: { supporter: -7, patience: -4 },
       show: pressure.band !== 'safe',
     },
   ];
@@ -1617,6 +1705,7 @@ function holdManagerMeeting(action, context) {
   manager.confidence = clampScore((manager.confidence ?? 60) + option.managerDelta);
   state.confidence = clampScore(state.confidence + option.boardDelta);
   state.fanTrust = clampScore((state.fanTrust ?? 60) + option.fanDelta);
+  applyChairmanTrait(option.traits || {});
   state.boardPlan.lastManagerMeeting = { action, week: state.currentWeek, season: state.season };
   const reaction = managerReactionText(option, manager);
   addStory({
@@ -1638,6 +1727,7 @@ function addressSupporters(action, context) {
   state.fanTrust = clampScore((state.fanTrust ?? 60) + option.fanDelta);
   state.confidence = clampScore(state.confidence + option.boardDelta);
   if (manager) manager.confidence = clampScore((manager.confidence ?? 60) + option.managerDelta);
+  applyChairmanTrait(option.traits || {});
   const reaction = supporterReactionText(option, context.pressure);
   addStory({
     title: `${club.short} chairman addresses supporters`,
@@ -1673,6 +1763,26 @@ function supporterTrustLabel(score) {
   return 'Revolt risk';
 }
 
+function traitsForRecruitmentPolicy(policy) {
+  return {
+    prospects: { youth: 6, prudence: 2, ambition: -1 },
+    experience: { youth: -4, ambition: 2 },
+    bargains: { prudence: 5, ambition: -1 },
+    promotion_push: { ambition: 6, prudence: -3 },
+    wage_control: { prudence: 6, ambition: -2 },
+    balanced: { prudence: 1, delegation: 1 },
+  }[policy] || {};
+}
+
+function traitsForBudgetPriority(priority) {
+  return {
+    squad: { ambition: 5, prudence: -3 },
+    facilities: { youth: 4, prudence: 2, ambition: -1 },
+    cautious: { prudence: 7, ambition: -3 },
+    balanced: { prudence: 1, patience: 1 },
+  }[priority] || {};
+}
+
 function hireDirector(id) {
   const club = userClub();
   const candidate = state.directorMarket.find(d => d.id === id);
@@ -1683,6 +1793,7 @@ function hireDirector(id) {
   club.cash -= cost;
   club.director = { ...candidate, confidence: 60 };
   state.directorMarket = directorMarketForClub(club, state.season);
+  applyChairmanTrait({ delegation: 5, prudence: candidate.speciality === 'wage_control' || candidate.speciality === 'bargains' ? 2 : 0 });
   addStory(directorAppointmentStory(club, club.director, cost));
   render();
 }
@@ -1694,21 +1805,26 @@ function approveDecision(id) {
 
   if (decision.type === 'scout_policy') {
     state.boardPlan.recruitmentPolicy = decision.payload.policy;
+    applyChairmanTrait({ ...traitsForRecruitmentPolicy(decision.payload.policy), delegation: 2 });
     state.market = guidedMarket(club);
   }
   if (decision.type === 'back_manager' && club.manager) {
     club.manager.confidence = Math.min(95, (club.manager.confidence ?? 60) + 6);
+    applyChairmanTrait({ patience: 4, delegation: 1 });
   }
   if (decision.type === 'tighten_spending' || decision.type === 'delay_facilities') {
     state.boardPlan.budgetPriority = decision.payload.priority || 'cautious';
+    applyChairmanTrait({ ...traitsForBudgetPriority(state.boardPlan.budgetPriority), delegation: 1 });
   }
   if (decision.type === 'greenlight_transfer') {
     state.transferFilters = { ...(state.transferFilters || {}), affordableOnly: true };
     state.currentTab = 'transfers';
+    applyChairmanTrait({ delegation: 3 });
   }
   if (decision.type === 'pressure_response') {
     state.confidence = Math.min(100, state.confidence + 3);
     state.fanTrust = clampScore((state.fanTrust ?? 60) + 3);
+    applyChairmanTrait({ supporter: 3, patience: 1 });
   }
   if (decision.type === 'renew_contract') {
     const player = club.players.find(p => p.id === decision.payload.playerId);
@@ -1720,6 +1836,8 @@ function approveDecision(id) {
     }
     club.cash -= demand.signingFee;
     renewPlayerContract(player, demand);
+    const view = managerPlayerView(player, club);
+    applyChairmanTrait(view.band === 'safe' ? { patience: 2, delegation: 1 } : view.band === 'danger' ? { patience: 1, prudence: -1 } : { prudence: 1 });
     decision.impact = `${player.name} signs for ${demand.years} years at £${fmt(demand.newWage)}/wk. Signing fee: £${fmt(demand.signingFee)}.`;
   }
 
@@ -1924,6 +2042,7 @@ function renderSquad() {
       const view = managerPlayerView(p, club);
       if (confirm(`Sell ${p.name} for £${fmt(Math.round(p.value * 0.9))}?\n\nManager view: ${view.saleText}.`)) {
         const fee = sellPlayer(p, club);
+        applyChairmanTrait(view.band === 'safe' ? { prudence: 3, delegation: -3, supporter: -1 } : { prudence: 3, delegation: 1 });
         alert(`${p.name} sold for £${fmt(fee)}.`);
         render();
       }
@@ -2082,10 +2201,12 @@ function hireManager(id) {
   const cost = managerCompensation(candidate, club);
   if (club.cash < cost) { alert('You cannot afford the compensation package.'); return; }
   if (!confirm(`Hire ${candidate.name} for £${fmt(cost)} compensation?`)) return;
+  const previousRating = club.manager?.rating || 0;
   club.cash -= cost;
   club.manager = { ...candidate, confidence: 60, directive: 'trust' };
   applyManagerTactics(club);
   state.managerMarket = availableManagersForClub(club, state.season);
+  applyChairmanTrait({ ambition: candidate.rating >= previousRating ? 3 : 1, patience: -3, delegation: 2 });
   addStory(managerAppointmentStory(club, club.manager, cost));
   render();
 }
@@ -2411,7 +2532,14 @@ function submitBid(id) {
   if (!fee || fee <= 0) { alert('Enter a valid fee.'); return; }
   const verdict = evaluateBid(target, fee, club);
   if (verdict.accepted) {
+    const fit = transferFit(target, club);
+    const wageAfter = projectedWageRatio(club, target);
     completeTransferIn(target, fee, club, state.market);
+    applyChairmanTrait({
+      ambition: fit.improvement >= 5 ? 4 : 1,
+      prudence: wageAfter > 0.8 ? -3 : 1,
+      youth: target.age <= 23 ? 3 : target.age >= 30 ? -2 : 0,
+    });
     addStory(transferCompletedStory({ player: target, fee, club, wageRatio: projectedWageRatio(club) }));
     closeTransferModal();
     alert(`${verdict.reason}\n${target.name} joins ${club.name}!`);
@@ -2578,6 +2706,7 @@ function renderStadium() {
 
   document.getElementById('expand').addEventListener('click', () => {
     club.cash -= expansion.cost; club.stadiumCapacity += expansion.seats;
+    applyChairmanTrait({ supporter: 2, prudence: expansion.annualGain > 0 ? 2 : -2, patience: 1 });
     addStory(infrastructureStory({
       title: 'Stadium expansion approved',
       body: `Capacity increased by ${fmt(expansion.seats)} seats. Forecast annual matchday gain: £${fmt(expansion.annualGain)}.`,
@@ -2587,10 +2716,17 @@ function renderStadium() {
   });
   document.getElementById('setTicket').addEventListener('click', () => {
     const v = parseInt(document.getElementById('ticket').value, 10);
-    if (v >= 5 && v <= 80) { club.ticketPrice = v; render(); }
+    if (v >= 5 && v <= 80) {
+      const old = club.ticketPrice;
+      club.ticketPrice = v;
+      if (v > old) applyChairmanTrait({ prudence: 2, supporter: -2 });
+      if (v < old) applyChairmanTrait({ supporter: 3, prudence: -1 });
+      render();
+    }
   });
   document.getElementById('upAcademy').addEventListener('click', () => {
     club.cash -= academyPlan.cost; club.academy++;
+    applyChairmanTrait({ youth: 7, patience: 3, prudence: 1 });
     addStory(infrastructureStory({
       title: 'Academy pathway upgraded',
       body: `Academy is now level ${club.academy}. ${academyPlan.impact}`,
@@ -2600,6 +2736,7 @@ function renderStadium() {
   });
   document.getElementById('upTraining').addEventListener('click', () => {
     club.cash -= trainingPlan.cost; club.training++;
+    applyChairmanTrait({ youth: 3, ambition: 2, patience: 1 });
     addStory(infrastructureStory({
       title: 'Training ground upgraded',
       body: `Training is now level ${club.training}. ${trainingPlan.impact}`,
