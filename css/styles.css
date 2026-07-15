@@ -83,6 +83,24 @@ body {
   border-bottom-color: var(--accent);
   font-weight: 600;
 }
+.top-nav button.needs-attention {
+  color: var(--danger);
+  border-bottom-color: rgba(255,95,111,0.55);
+}
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
 .top-nav button:disabled {
   opacity: .35;
   cursor: not-allowed;

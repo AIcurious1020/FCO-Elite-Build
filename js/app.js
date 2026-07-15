@@ -152,6 +152,7 @@ function showClubSelection() {
   setNavEnabled(false);
   document.querySelectorAll('.tab-content').forEach(s => { s.hidden = s.id !== 'dashboard'; });
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === 'dashboard'));
+  updateNavDecisionBadge();
   document.getElementById('headerClubName').textContent = 'Choose your club';
   document.getElementById('headerCash').textContent = 'New career';
   document.getElementById('dashboard').innerHTML = `
@@ -583,6 +584,7 @@ function switchTab(tab) {
   if (!state.league) return;
   state.currentTab = tab;
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  updateNavDecisionBadge();
   render();
 }
 
@@ -590,6 +592,16 @@ function setNavEnabled(enabled) {
   document.querySelectorAll('[data-tab]').forEach(btn => {
     btn.disabled = !enabled && btn.dataset.tab !== 'dashboard';
   });
+}
+
+function updateNavDecisionBadge() {
+  const btn = document.getElementById('boardroomNav');
+  if (!btn) return;
+  const count = state.league ? (state.decisions || []).length : 0;
+  btn.classList.toggle('needs-attention', count > 0);
+  btn.innerHTML = count > 0
+    ? `Boardroom <span class="nav-badge">${count}</span>`
+    : 'Boardroom';
 }
 
 function setupGlobalButtons() {
@@ -618,6 +630,7 @@ function render() {
   const club = userClub();
   document.getElementById('headerClubName').textContent = club.name;
   document.getElementById('headerCash').textContent = '£' + fmt(club.cash);
+  updateNavDecisionBadge();
 
   document.querySelectorAll('.tab-content').forEach(s => { s.hidden = s.id !== state.currentTab; });
 
@@ -716,8 +729,6 @@ function renderDashboard() {
       ${renderInbox()}
     </div>
 
-    ${renderDecisionInbox(true)}
-
     <div class="card">
       <div class="flex-between">
         <h2 class="mb0">Next Match Preview</h2>
@@ -791,7 +802,6 @@ function renderDashboard() {
   if (openTimelineCalendar) openTimelineCalendar.addEventListener('click', () => switchTab('fixtures'));
   const openBoardroom = document.getElementById('openBoardroom');
   if (openBoardroom) openBoardroom.addEventListener('click', () => switchTab('boardroom'));
-  bindDecisionButtons();
 }
 
 function renderDevelopmentSummary() {
