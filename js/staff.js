@@ -171,7 +171,7 @@ export function createStaffReports({ club, market = [], forecast, pressure, trac
     const urgent = (player.contractYears ?? 0) <= 0;
     const title = urgent ? `${player.name} contract expires now` : `${player.name} enters final year`;
     reports.push({
-      id: `S${season}-W${week}-contract-${player.id}-${player.contractYears ?? 0}`,
+      id: `S${season}-contract-${player.id}-${player.contractYears ?? 0}`,
       type: 'renew_contract',
       source: 'Club Secretary',
       title,
@@ -186,7 +186,7 @@ export function createStaffReports({ club, market = [], forecast, pressure, trac
 
   if (bestTarget) {
     reports.push({
-      id: `S${season}-W${week}-transfer-${bestTarget.id}`,
+      id: `S${season}-transfer-${bestTarget.id}`,
       type: 'greenlight_transfer',
       source: 'Director of Football',
       title: `${club.director?.name || 'DoF'} recommends ${bestTarget.name}`,
@@ -200,7 +200,7 @@ export function createStaffReports({ club, market = [], forecast, pressure, trac
 
   if (track?.state === 'offtrack' || pressure?.band === 'danger') {
     reports.push({
-      id: `S${season}-W${week}-manager-backing`,
+      id: `S${season}-manager-backing`,
       type: 'back_manager',
       source: 'Board Secretary',
       title: 'Manager backing requested',
@@ -214,7 +214,7 @@ export function createStaffReports({ club, market = [], forecast, pressure, trac
 
   if (cashTight) {
     reports.push({
-      id: `S${season}-W${week}-spending-control`,
+      id: `S${season}-spending-control`,
       type: 'tighten_spending',
       source: 'Finance Director',
       title: 'Spending control advised',
@@ -228,7 +228,7 @@ export function createStaffReports({ club, market = [], forecast, pressure, trac
 
   if (pressure?.band === 'warning' || pressure?.band === 'danger') {
     reports.push({
-      id: `S${season}-W${week}-pressure-response`,
+      id: `S${season}-pressure-response`,
       type: 'pressure_response',
       source: 'Media Officer',
       title: 'Supporter message recommended',
@@ -243,7 +243,7 @@ export function createStaffReports({ club, market = [], forecast, pressure, trac
   if (policy === 'balanced' && club.played >= 4) {
     const suggested = track?.state === 'ontrack' ? 'promotion_push' : cashTight ? 'wage_control' : 'bargains';
     reports.push({
-      id: `S${season}-W${week}-scout-focus-${suggested}`,
+      id: `S${season}-scout-focus-${suggested}`,
       type: 'scout_policy',
       source: 'Recruitment Team',
       title: `${RECRUITMENT_POLICIES[suggested].label} scouting focus`,

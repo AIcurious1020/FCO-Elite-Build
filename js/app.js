@@ -510,7 +510,7 @@ function load() {
     state.managerMarket = data.managerMarket ?? availableManagersForClub(clubsById[data.userClubId], data.season || 1);
     state.directorMarket = data.directorMarket ?? directorMarketForClub(clubsById[data.userClubId], data.season || 1);
     state.boardPlan = { ...defaultBoardPlan(), ...(data.boardPlan || {}) };
-    state.decisions = data.decisions ?? [];
+    state.decisions = dedupeDecisions((data.decisions ?? []).map(enrichDecisionReport));
     syncSeasonCalendar();
     state.currentEvent = nextCalendarIndex();
     if (state.currentTab === 'tactics') state.currentTab = 'manager';
@@ -1100,6 +1100,7 @@ function renderDecisionInbox(compact = false) {
             <span class="story-kicker">${decision.source}</span>
             <strong>${decision.title}</strong>
             <p class="muted small">${decision.body}</p>
+            ${decision.managerView ? `<p class="small ${bandClass(decision.managerView.band)}">Manager view: ${decision.managerView.label}</p>` : ''}
             <p class="small ${decision.importance >= 2 ? 'warning' : 'muted'}">${decision.impact}</p>
           </div>
           <div class="decision-actions">
@@ -1768,11 +1769,88 @@ function generateDecisionReports(reason = 'routine') {
     week: state.currentWeek,
     reason,
   });
-  const existing = new Set((state.decisions || []).map(d => d.id));
-  const fresh = reports.filter(d => !existing.has(d.id));
-  state.decisions = [...(state.decisions || []), ...fresh]
+  const enriched = reports.map(enrichDecisionReport);
+  const existing = new Set((state.decisions || []).map(decisionKey));
+  const fresh = enriched.filter(d => !existing.has(decisionKey(d)));
+  state.decisions = dedupeDecisions([...(state.decisions || []), ...fresh])
     .sort((a, b) => (b.importance || 1) - (a.importance || 1))
     .slice(0, 8);
+}
+
+function dedupeDecisions(decisions) {
+  const seen = new Set();
+  return decisions.filter(decision => {
+    const key = decisionKey(decision);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function decisionKey(decision) {
+  if (!decision) return '';
+  if (decision.type === 'renew_contract') {
+    return `${state.season}:renew_contract:${decision.payload?.playerId || ''}`;
+  }
+  if (decision.type === 'greenlight_transfer') {
+    return `${state.season}:greenlight_transfer:${decision.payload?.playerId || ''}`;
+  }
+  if (decision.type === 'scout_policy') {
+    return `${state.season}:scout_policy:${decision.payload?.policy || ''}`;
+  }
+  return `${state.season}:${decision.type}`;
+}
+
+function enrichDecisionReport(decision) {
+  if (decision.type !== 'renew_contract') return decision;
+  const player = userClub().players.find(p => p.id === decision.payload?.playerId);
+  if (!player) return decision;
+  const view = managerPlayerView(player, userClub());
+  const hasViewText = decision.body?.includes('Manager view:');
+  return {
+    ...decision,
+    body: hasViewText ? decision.body : `${decision.body} Manager view: ${view.contractText}.`,
+    managerView: view,
+  };
+}
+
+function managerPlayerView(player, club) {
+  const xi = new Set(club.bestEleven().map(p => p.id));
+  const samePosition = club.players.filter(p => p.position === player.position).sort((a, b) => b.overall - a.overall);
+  const rank = samePosition.findIndex(p => p.id === player.id) + 1;
+  const avg = avgOverall(club);
+  const isStarter = xi.has(player.id);
+  const thinPosition = samePosition.length <= ({ GK: 2, DEF: 5, MID: 5, FWD: 3 }[player.position] || 4);
+  if (isStarter && (player.overall >= avg || rank === 1)) {
+    return {
+      band: 'safe',
+      label: 'Key player',
+      contractText: 'the manager wants this key player kept',
+      saleText: 'this is a key player the manager wants to keep',
+    };
+  }
+  if (isStarter || rank <= 2 || thinPosition) {
+    return {
+      band: 'warning',
+      label: 'Keep if sensible',
+      contractText: 'the manager sees him as useful, but only on sensible wages',
+      saleText: 'the manager would prefer to keep him unless the fee funds a clear upgrade',
+    };
+  }
+  if (player.age <= 23 && player.potential >= avg + 5) {
+    return {
+      band: 'warning',
+      label: 'Development player',
+      contractText: 'the manager sees development value, but not as a guaranteed starter',
+      saleText: 'the manager is open to a sale only if the price reflects his potential',
+    };
+  }
+  return {
+    band: 'danger',
+    label: 'Not in plans',
+    contractText: 'he is not central to the manager plans',
+    saleText: 'the manager is comfortable selling',
+  };
 }
 
 /* ---------- Squad ---------- */
@@ -1787,6 +1865,7 @@ function renderSquad() {
 
   const rows = players.map(p => {
     const contract = contractStatus(p);
+    const view = managerPlayerView(p, club);
     return `
     <tr class="${xi.has(p.id) ? 'highlight-row' : ''} ${p.available === false ? 'unavailable-row' : ''}">
       <td>${p.name} ${xi.has(p.id) ? '<span class="small success">●</span>' : ''}</td>
@@ -1801,6 +1880,7 @@ function renderSquad() {
       <td class="${p.available === false ? 'danger' : 'success'} small">${p.available === false ? `${p.injury} · ${p.injuryWeeks}w` : 'Available'}</td>
       <td class="num">£${fmt(p.wage)}</td>
       <td class="${bandClass(contract.band)} small">${contract.label}</td>
+      <td class="${bandClass(view.band)} small">${view.label}</td>
       <td class="num">£${fmt(p.value)}</td>
       <td><button class="btn-ghost btn-sm" data-sell="${p.id}">Sell</button></td>
     </tr>
@@ -1829,7 +1909,7 @@ function renderSquad() {
         <thead><tr>
           <th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th>
           <th class="num">Att</th><th class="num">Def</th><th class="num">Pas</th><th class="num">Fin</th>
-          <th class="num">Form</th><th>Status</th><th class="num">Wage</th><th>Contract</th><th class="num">Value</th><th></th>
+          <th class="num">Form</th><th>Status</th><th class="num">Wage</th><th>Contract</th><th>Manager view</th><th class="num">Value</th><th></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -1841,7 +1921,8 @@ function renderSquad() {
       const p = club.players.find(x => x.id === btn.dataset.sell);
       if (!p) return;
       if (club.players.length <= 11) { alert('You need at least 11 players.'); return; }
-      if (confirm(`Sell ${p.name} for £${fmt(Math.round(p.value * 0.9))}?`)) {
+      const view = managerPlayerView(p, club);
+      if (confirm(`Sell ${p.name} for £${fmt(Math.round(p.value * 0.9))}?\n\nManager view: ${view.saleText}.`)) {
         const fee = sellPlayer(p, club);
         alert(`${p.name} sold for £${fmt(fee)}.`);
         render();
