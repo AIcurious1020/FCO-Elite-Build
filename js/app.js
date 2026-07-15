@@ -34,6 +34,7 @@ import {
   infrastructureStory, seasonReviewStories, objectiveStory, injuryStory,
   cupStory, cupRoundStory, cupDrawStory, rivalTransferStory, clubsToWatchStory,
   managerAppointmentStory, managerDirectiveStory,
+  boardroomPolicyStory, directorAppointmentStory, managerMeetingStory, pressureStory,
 } from './news.js';
 import {
   processWeeklyInjuries, injuredPlayers, availabilityByPosition, missingStarters,
@@ -45,6 +46,11 @@ import {
   availableManagersForClub, applyManagerTactics, CHAIRMAN_DIRECTIVES,
   MANAGER_STYLES, managerCompensation, managerFit, managerStatus,
 } from './manager.js';
+import {
+  createDirectorForClub, directorMarketForClub, defaultBoardPlan,
+  RECRUITMENT_POLICIES, BUDGET_PRIORITIES, recruitmentScore,
+  policyRecommendation, pressureSnapshot, budgetGuidance,
+} from './staff.js';
 
 // v3 save schema (multi-division + board objectives). Older saves are
 // incompatible, so they are simply ignored and a fresh pyramid game starts.
@@ -78,6 +84,8 @@ const state = {
   resultMemory: [],
   worldActivity: [],
   managerMarket: [],
+  directorMarket: [],
+  boardPlan: defaultBoardPlan(),
 };
 
 /* ------------------------------------------------------------------ */
@@ -103,7 +111,9 @@ function newGame(userClubId = 'solihull') {
   state.fixtures = generateFixtures(clubsInDivision(lg.clubs, uc.division));
   state.currentWeek = 0;
   state.season = 1;
-  state.market = generateMarket(uc);
+  state.boardPlan = defaultBoardPlan();
+  ensureClubStaff(lg.clubs, state.season);
+  state.market = guidedMarket(uc);
   state.lastResults = [];
   // Board objectives for the opening season.
   state.confidence = START_CONFIDENCE;
@@ -121,6 +131,7 @@ function newGame(userClubId = 'solihull') {
   state.resultMemory = [];
   state.worldActivity = [];
   state.managerMarket = availableManagersForClub(uc, state.season);
+  state.directorMarket = directorMarketForClub(uc, state.season);
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
@@ -191,6 +202,14 @@ function ensureClubManagers(clubs, season = state.season || 1) {
     }
     club.manager.directive = club.manager.directive || 'trust';
     applyManagerTactics(club);
+  });
+}
+
+function ensureClubStaff(clubs, season = state.season || 1) {
+  clubs.forEach((club, i) => {
+    if (!club.director) {
+      club.director = createDirectorForClub(club, season + i);
+    }
   });
 }
 
@@ -432,6 +451,8 @@ function save() {
       resultMemory: state.resultMemory,
       worldActivity: state.worldActivity,
       managerMarket: state.managerMarket,
+      directorMarket: state.directorMarket,
+      boardPlan: state.boardPlan,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -450,6 +471,7 @@ function load() {
     state.currentWeek = data.currentWeek;
     state.season = data.season;
     ensureClubManagers(clubs, state.season || 1);
+    ensureClubStaff(clubs, state.season || 1);
     state.market = (data.market || []).map(p => Object.assign(new Player(p), p));
     state.transferFilters = data.transferFilters ?? { position: 'ALL', affordableOnly: false };
     state.lastResults = (data.lastResults || []).map(r => ({
@@ -473,6 +495,8 @@ function load() {
     state.resultMemory = data.resultMemory ?? [];
     state.worldActivity = data.worldActivity ?? [];
     state.managerMarket = data.managerMarket ?? availableManagersForClub(clubsById[data.userClubId], data.season || 1);
+    state.directorMarket = data.directorMarket ?? directorMarketForClub(clubsById[data.userClubId], data.season || 1);
+    state.boardPlan = { ...defaultBoardPlan(), ...(data.boardPlan || {}) };
     syncSeasonCalendar();
     state.currentEvent = nextCalendarIndex();
     if (state.currentTab === 'tactics') state.currentTab = 'manager';
@@ -496,6 +520,7 @@ function serialiseClub(c) {
     ticketPrice: c.ticketPrice, stadiumCapacity: c.stadiumCapacity,
     isUser: c.isUser, tactics: c.tactics, academy: c.academy, training: c.training,
     manager: c.manager,
+    director: c.director,
     played: c.played, won: c.won, drawn: c.drawn, lost: c.lost,
     gf: c.gf, ga: c.ga, points: c.points,
     players: c.players.map(serialisePlayer),
@@ -529,6 +554,7 @@ function deserialiseClub(d) {
   club.training = d.training ?? 1;
   club.manager = d.manager || null;
   if (club.manager) applyManagerTactics(club);
+  club.director = d.director || null;
   Object.assign(club, {
     played: d.played, won: d.won, drawn: d.drawn, lost: d.lost,
     gf: d.gf, ga: d.ga, points: d.points,
@@ -593,6 +619,7 @@ function render() {
     dashboard: renderDashboard,
     news: renderNews,
     club: renderClubProfile,
+    boardroom: renderBoardroom,
     squad: renderSquad,
     manager: renderManager,
     fixtures: renderFixtures,
@@ -620,6 +647,7 @@ function renderDashboard() {
   const obj = state.objective;
   const track = trackStatus(obj, pos, club.played);
   const conf = confidenceLabel(state.confidence);
+  const pressure = currentPressure(club, pos, track);
 
   const nextFixture = nextEvent ? fixtureForCalendarEvent(nextEvent) : null;
   const preview = nextFixture ? matchPreview(nextFixture, nextEvent) : null;
@@ -659,6 +687,19 @@ function renderDashboard() {
       </div>
       <div class="bar"><div class="bar-fill ${bandClass(conf.band)}" style="width:${state.confidence}%"></div></div>
       ${jobBanner()}
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h2 class="mb0">Boardroom</h2>
+        <button class="btn-ghost btn-sm" id="openBoardroom">Open controls</button>
+      </div>
+      <div class="grid mt">
+        <div class="mini-panel"><span class="muted small">Director of Football</span><strong>${club.director?.name || 'Vacant'}</strong></div>
+        <div class="mini-panel"><span class="muted small">Recruitment</span><strong>${RECRUITMENT_POLICIES[state.boardPlan.recruitmentPolicy]?.label || 'Balanced'}</strong></div>
+        <div class="mini-panel"><span class="muted small">Pressure</span><strong class="${bandClass(pressure.band)}">${pressure.label}</strong></div>
+      </div>
+      <p class="muted small mt">${pressure.text}</p>
     </div>
 
     <div class="card">
@@ -740,6 +781,8 @@ function renderDashboard() {
   if (openNews) openNews.addEventListener('click', () => switchTab('news'));
   const openTimelineCalendar = document.getElementById('openTimelineCalendar');
   if (openTimelineCalendar) openTimelineCalendar.addEventListener('click', () => switchTab('fixtures'));
+  const openBoardroom = document.getElementById('openBoardroom');
+  if (openBoardroom) openBoardroom.addEventListener('click', () => switchTab('boardroom'));
 }
 
 function renderDevelopmentSummary() {
@@ -1128,6 +1171,157 @@ function renderLastResults() {
     </tr>`;
   }).join('');
   return `<div class="card"><h2>Latest Results</h2><table><tbody>${rows}</tbody></table></div>`;
+}
+
+/* ---------- Boardroom ---------- */
+function renderBoardroom() {
+  const club = userClub();
+  if (!club.director) club.director = createDirectorForClub(club, state.season);
+  const table = divisionStandings(state.league.clubs, club.division);
+  const pos = table.indexOf(club) + 1;
+  const track = trackStatus(state.objective, pos, club.played);
+  const pressure = currentPressure(club, pos, track);
+  const forecast = financeForecast(club);
+  const guidance = budgetGuidance(state.boardPlan, forecast);
+  const policy = RECRUITMENT_POLICIES[state.boardPlan.recruitmentPolicy] || RECRUITMENT_POLICIES.balanced;
+  const priority = BUDGET_PRIORITIES[state.boardPlan.budgetPriority] || BUDGET_PRIORITIES.balanced;
+  const candidates = state.directorMarket.length ? state.directorMarket : directorMarketForClub(club, state.season);
+  state.directorMarket = candidates;
+
+  document.getElementById('boardroom').innerHTML = `
+    <div class="card">
+      <div class="flex-between">
+        <div>
+          <h2 class="mb0">Boardroom</h2>
+          <p class="muted small">Chairman controls: staff, budgets, recruitment direction, manager backing, and pressure management.</p>
+        </div>
+        <span class="pill obj-${pressure.band === 'safe' ? 'ontrack' : pressure.band === 'warning' ? 'close' : pressure.band === 'danger' ? 'offtrack' : 'pending'}">${pressure.label}</span>
+      </div>
+      <div class="grid mt">
+        <div class="mini-panel"><span class="muted small">Director of Football</span><strong>${club.director.name}</strong><small class="muted">${club.director.rating}/100 · ${RECRUITMENT_POLICIES[club.director.speciality]?.label || 'Balanced'}</small></div>
+        <div class="mini-panel"><span class="muted small">Recruitment Brief</span><strong>${policy.label}</strong><small class="muted">${policy.text}</small></div>
+        <div class="mini-panel"><span class="muted small">Budget Plan</span><strong>${priority.label}</strong><small class="muted">${priority.text}</small></div>
+      </div>
+      <p class="small ${bandClass(pressure.band)} mt">${pressure.text} Pressure score: ${pressure.score}/100.</p>
+    </div>
+
+    <div class="grid">
+      <div class="card mb0">
+        <h2>Recruitment Policy</h2>
+        <div class="form-row">
+          <label>DoF brief</label>
+          <select id="recruitmentPolicy">
+            ${Object.entries(RECRUITMENT_POLICIES).map(([key, value]) => `<option value="${key}" ${key === state.boardPlan.recruitmentPolicy ? 'selected' : ''}>${value.label}</option>`).join('')}
+          </select>
+        </div>
+        <p class="muted small">${policy.text}</p>
+      </div>
+      <div class="card mb0">
+        <h2>Budget Planning</h2>
+        <div class="form-row">
+          <label>Priority</label>
+          <select id="budgetPriority">
+            ${Object.entries(BUDGET_PRIORITIES).map(([key, value]) => `<option value="${key}" ${key === state.boardPlan.budgetPriority ? 'selected' : ''}>${value.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="grid mt">
+          <div class="mini-panel"><span class="muted small">Transfer pot</span><strong>£${fmt(guidance.transferPot)}</strong></div>
+          <div class="mini-panel"><span class="muted small">Wage ceiling</span><strong>£${fmt(guidance.weeklyWageRoom)}/wk</strong></div>
+          <div class="mini-panel"><span class="muted small">Facilities reserve</span><strong>£${fmt(guidance.facilitiesReserve)}</strong></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h2 class="mb0">Manager Performance Meeting</h2>
+        <span class="muted small">${club.manager.name} · confidence ${club.manager.confidence ?? 60}/100</span>
+      </div>
+      <p class="muted small mt">Meetings adjust manager confidence and create a news story. They are broad chairman actions, not match-by-match tactics.</p>
+      <div class="flex mt action-row">
+        <button class="btn btn-sm" data-manager-meeting="back">Publicly Back Manager</button>
+        <button class="btn-ghost btn-sm" data-manager-meeting="review">Hold Review Meeting</button>
+        <button class="btn-ghost btn-sm danger-action" data-manager-meeting="warn">Issue Warning</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h2 class="mb0">Director of Football Shortlist</h2>
+        <button class="btn-ghost btn-sm" id="refreshDirectors">Refresh shortlist</button>
+      </div>
+      <table class="mt">
+        <thead><tr><th>Name</th><th>Speciality</th><th class="num">Rating</th><th class="num">Wage</th><th class="num">Cost</th><th></th></tr></thead>
+        <tbody>${candidates.map(candidate => `
+          <tr>
+            <td>${candidate.name}<br><span class="muted small">${candidate.age} years old</span></td>
+            <td>${RECRUITMENT_POLICIES[candidate.speciality]?.label || 'Balanced'}</td>
+            <td class="num">${candidate.rating}</td>
+            <td class="num">£${fmt(candidate.wage)}/wk</td>
+            <td class="num">£${fmt(candidate.compensation)}</td>
+            <td><button class="btn btn-sm" data-hire-director="${candidate.id}" ${club.cash < candidate.compensation ? 'disabled' : ''}>Hire</button></td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+
+  document.getElementById('recruitmentPolicy').addEventListener('change', e => {
+    state.boardPlan.recruitmentPolicy = e.target.value;
+    state.market = guidedMarket(club);
+    addStory(boardroomPolicyStory(club, RECRUITMENT_POLICIES[state.boardPlan.recruitmentPolicy], BUDGET_PRIORITIES[state.boardPlan.budgetPriority]));
+    render();
+  });
+  document.getElementById('budgetPriority').addEventListener('change', e => {
+    state.boardPlan.budgetPriority = e.target.value;
+    addStory(boardroomPolicyStory(club, RECRUITMENT_POLICIES[state.boardPlan.recruitmentPolicy], BUDGET_PRIORITIES[state.boardPlan.budgetPriority]));
+    render();
+  });
+  document.querySelectorAll('[data-manager-meeting]').forEach(btn => {
+    btn.addEventListener('click', () => holdManagerMeeting(btn.dataset.managerMeeting, pressure));
+  });
+  document.getElementById('refreshDirectors').addEventListener('click', () => {
+    state.directorMarket = directorMarketForClub(club, state.season);
+    render();
+  });
+  document.querySelectorAll('[data-hire-director]').forEach(btn => {
+    btn.addEventListener('click', () => hireDirector(btn.dataset.hireDirector));
+  });
+}
+
+function holdManagerMeeting(action, pressure) {
+  const club = userClub();
+  const manager = club.manager;
+  if (!manager) return;
+  const delta = action === 'back' ? 6 : action === 'warn' ? -8 : pressure.band === 'danger' ? -3 : 2;
+  manager.confidence = Math.max(20, Math.min(95, (manager.confidence ?? 60) + delta));
+  state.boardPlan.lastManagerMeeting = { action, week: state.currentWeek, season: state.season };
+  addStory(managerMeetingStory(club, manager, action, pressure));
+  render();
+}
+
+function hireDirector(id) {
+  const club = userClub();
+  const candidate = state.directorMarket.find(d => d.id === id);
+  if (!candidate) return;
+  const cost = candidate.compensation || 0;
+  if (club.cash < cost) { alert('You cannot afford this staff package.'); return; }
+  if (!confirm(`Hire ${candidate.name} as Director of Football for £${fmt(cost)}?`)) return;
+  club.cash -= cost;
+  club.director = { ...candidate, confidence: 60 };
+  state.directorMarket = directorMarketForClub(club, state.season);
+  addStory(directorAppointmentStory(club, club.director, cost));
+  render();
+}
+
+function currentPressure(club, pos, track) {
+  const history = state.clubHistory || createClubHistory(club);
+  const latest = history.seasons?.at(-1) || null;
+  return pressureSnapshot({
+    club,
+    position: pos,
+    objective: state.objective,
+    track,
+    fanMood: fanMood(history, state.confidence, latest),
+  });
 }
 
 /* ---------- Squad ---------- */
@@ -1564,8 +1758,13 @@ function renderTransfers() {
     </div>
   `).join('');
 
-  const rows = filtered.map(p => {
+  const rows = filtered
+    .slice()
+    .sort((a, b) => transferPolicyScore(b, club).score - transferPolicyScore(a, club).score)
+    .map(p => {
     const fit = transferFit(p, club);
+    const policyFit = transferPolicyScore(p, club, fit);
+    const rec = policyRecommendation(policyFit.score);
     const fitClass = fit.affordable ? (fit.improvement >= 5 || fit.need.priority === 'urgent' ? 'success' : 'warning') : 'danger';
     return `
     <tr>
@@ -1577,6 +1776,7 @@ function renderTransfers() {
       <td class="num">£${fmt(p.wage)}/wk</td>
       <td class="num">£${fmt(fit.askingPrice)}</td>
       <td><span class="${fitClass} small">${fit.recommendation}</span></td>
+      <td><span class="${bandClass(rec.band)} small">${rec.label} · ${policyFit.score}</span></td>
       <td><button class="btn btn-sm" data-buy="${p.id}">Bid</button></td>
     </tr>`;
   }).join('');
@@ -1587,7 +1787,7 @@ function renderTransfers() {
         <h2 class="mb0">Transfer Market</h2>
         <span class="success"><strong>£${fmt(club.cash)}</strong> available</span>
       </div>
-      <p class="muted small mt">Bids are judged transparently: meet ~95% of value and afford the fee. The market now shows squad fit, wage impact, and recommended targets.</p>
+      <p class="muted small mt">Bids are judged transparently. ${club.director?.name || 'Your staff'} sort targets against the board's ${RECRUITMENT_POLICIES[state.boardPlan.recruitmentPolicy]?.label || 'Balanced'} recruitment brief.</p>
       <div class="need-grid mt">${needCards}</div>
       <div class="transfer-toolbar mt">
         <label>
@@ -1607,8 +1807,8 @@ function renderTransfers() {
         <button class="btn-ghost" id="refreshMarket">Scout new targets</button>
       </div>
       <table>
-        <thead><tr><th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th><th class="num">Vs Best</th><th class="num">Wage</th><th class="num">Ask</th><th>Fit</th><th></th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="9" class="muted">No targets match these filters.</td></tr>'}</tbody>
+        <thead><tr><th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th><th class="num">Vs Best</th><th class="num">Wage</th><th class="num">Ask</th><th>Squad Fit</th><th>DoF View</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="10" class="muted">No targets match these filters.</td></tr>'}</tbody>
       </table>
     </div>`;
 
@@ -1624,7 +1824,7 @@ function renderTransfers() {
     render();
   });
   document.getElementById('refreshMarket').addEventListener('click', () => {
-    state.market = generateMarket(club);
+    state.market = guidedMarket(club);
     addStory(transferMarketStory(state.market, club));
     render();
   });
@@ -1688,6 +1888,18 @@ function submitBid(id) {
 function closeTransferModal() {
   document.getElementById('transferModal').hidden = true;
   document.getElementById('transferModalContent').innerHTML = '';
+}
+
+function guidedMarket(club, size = 10) {
+  return generateMarket(club, size)
+    .sort((a, b) => transferPolicyScore(b, club).score - transferPolicyScore(a, club).score);
+}
+
+function transferPolicyScore(player, club, fit = transferFit(player, club)) {
+  return {
+    score: recruitmentScore(player, club, fit, state.boardPlan?.recruitmentPolicy || 'balanced'),
+    fit,
+  };
 }
 
 function transferFilterOption(value, label, selected) {
@@ -1898,6 +2110,7 @@ function playLeagueEvent(event) {
   updateFormAndMorale(results);
   processWeeklyInjuries(results).forEach(event => addStory(injuryStory(event, uc)));
   processWorldActivity(event);
+  processPressureStory(event);
 }
 
 function playCupEvent(event) {
@@ -1952,6 +2165,18 @@ function onPlayCupRound() {
     syncSeasonCalendar();
     state.currentEvent = nextCalendarIndex();
     render();
+  }
+}
+
+function processPressureStory(event) {
+  if (!event || event.type !== 'league') return;
+  const club = userClub();
+  const table = divisionStandings(state.league.clubs, club.division);
+  const pos = table.indexOf(club) + 1;
+  const track = trackStatus(state.objective, pos, club.played);
+  const pressure = currentPressure(club, pos, track);
+  if (pressure.band === 'danger' || event.week % 4 === 0) {
+    addStory(pressureStory(club, pressure));
   }
 }
 
@@ -2142,8 +2367,9 @@ function onNewSeason() {
   state.fixtures = generateFixtures(clubsInDivision(clubs, uc.division));
   state.currentWeek = 0;
   state.season++;
-  state.market = generateMarket(uc);
+  state.market = guidedMarket(uc);
   state.managerMarket = availableManagersForClub(uc, state.season);
+  state.directorMarket = directorMarketForClub(uc, state.season);
   state.lastResults = [];
   state.cup = createCup(clubs, state.season);
   state.lastCupResults = [];

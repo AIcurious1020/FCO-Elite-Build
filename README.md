@@ -7,7 +7,7 @@ A web-first football club management sim inspired by Football Chairman Pro 2, re
 - **Transparent match simulation** — every result shows expected goals, both sides' attack/defence ratings, and the home bonus. Goals are drawn from a fair Poisson model, so favourites win at the correct rate with **no rigged streaks**.
 - **Smooth financial progression** — solid revenue floor, division-scaled TV money, and advisory (not instant-death) wage warnings. One bad season hurts but never bankrupts a well-run club.
 - **Clean, fast UI** — sticky nav, responsive cards and tables, mobile-friendly, instant tab switching.
-- **Chairman-first depth** — full double round-robin fixtures, live league table, head coach hiring/directives, transfer market with transparent negotiation, stadium expansion, and youth/training infrastructure.
+- **Chairman-first depth** — full double round-robin fixtures, live league table, boardroom budget planning, Director of Football recruitment policy, head coach hiring/directives, transparent transfers, stadium expansion, and youth/training infrastructure.
 
 ## Features
 
@@ -16,6 +16,7 @@ A web-first football club management sim inspired by Football Chairman Pro 2, re
 | Dashboard | Season progress, next fixture, one-click "Play Next Matchweek", latest results |
 | News | Season stories covering results, transfers, injuries, cups, and rival activity |
 | Club | Club identity, history, honours, records, and fan mood |
+| Boardroom | Director of Football, recruitment policy, budget priority, manager meetings, fan/media pressure |
 | Squad | Full squad with position-weighted overalls, best-XI highlighting, sell players |
 | Manager | Hire/replace the head coach, set chairman instructions, and review tactical output |
 | Fixtures | Your full season calendar, including scheduled league and cup dates |
@@ -42,6 +43,7 @@ FCO-elite/
     finance.js    # revenue, costs, health bands
     transfers.js  # market + transparent negotiation
     manager.js    # head coach market, style, directives, tactical output
+    staff.js      # boardroom staff, recruitment policy, budgets, pressure
     data.js       # seed football pyramid, generated squads
 ```
 

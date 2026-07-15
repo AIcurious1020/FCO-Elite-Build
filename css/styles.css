@@ -507,6 +507,7 @@ select, input {
 
 .form-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
 .form-row label { min-width: 110px; color: var(--muted); font-size: 13px; }
+.danger-action { color: var(--danger); border-color: rgba(255,95,111,0.45); }
 
 @media (max-width: 600px) {
   .header h1 { font-size: 18px; }

@@ -263,6 +263,51 @@ export function managerDirectiveStory(club, manager) {
   };
 }
 
+export function boardroomPolicyStory(club, policy, priority) {
+  return {
+    title: `${club.short} set boardroom direction`,
+    body: `${club.name} will recruit under a ${policy.label.toLowerCase()} brief while budgeting around ${priority.label.toLowerCase()}.`,
+    type: 'board',
+    category: 'Boardroom',
+    importance: 1,
+  };
+}
+
+export function directorAppointmentStory(club, director, cost) {
+  return {
+    title: `${club.short} appoint ${director.name} as Director of Football`,
+    body: `${director.name} joins with a ${director.rating}/100 staff rating and a ${director.speciality.replace('_', ' ')} speciality. Package cost: £${fmt(cost)}.`,
+    type: 'board',
+    category: 'Staff',
+    importance: 2,
+  };
+}
+
+export function managerMeetingStory(club, manager, action, pressure) {
+  const labels = {
+    back: 'publicly backed',
+    warn: 'warned',
+    review: 'reviewed',
+  };
+  return {
+    title: `${club.short} ${labels[action] || 'meet with'} ${manager.name}`,
+    body: `The chairman ${labels[action] || 'met'} the head coach with club pressure rated ${pressure.label.toLowerCase()}. Manager confidence is now ${manager.confidence}/100.`,
+    type: action === 'warn' ? 'result-bad' : 'board',
+    category: 'Manager',
+    importance: action === 'warn' ? 2 : 1,
+  };
+}
+
+export function pressureStory(club, pressure) {
+  return {
+    title: `${club.short} mood check: ${pressure.label}`,
+    body: pressure.text,
+    type: pressure.band === 'danger' ? 'result-bad' : pressure.band === 'warning' ? 'league' : 'board',
+    category: 'Media',
+    importance: pressure.band === 'danger' ? 2 : 1,
+  };
+}
+
 function fmt(n) {
   return Math.round(n).toLocaleString('en-GB');
 }

@@ -10,7 +10,7 @@ export class Club {
   constructor({
     id, name, short, division, reputation,
     cash, baseCommercial, ticketPrice,
-    stadiumCapacity, players = [], isUser = false, manager = null
+    stadiumCapacity, players = [], isUser = false, manager = null, director = null
   }) {
     this.id = id;
     this.name = name;
@@ -24,6 +24,7 @@ export class Club {
     this.players = players.map(p => (p instanceof Player ? p : new Player(p)));
     this.isUser = isUser;
     this.manager = manager;
+    this.director = director;
 
     // Head coach tactical plan. Mentality shifts attack/defence emphasis.
     this.tactics = { mentality: 'balanced', pressing: 'medium' };
@@ -68,9 +69,10 @@ export class Club {
     return xi;
   }
 
-  // Weekly wage bill for the whole squad.
+  // Weekly wage bill for squad plus senior football staff.
   wageBill() {
-    return this.players.reduce((s, p) => s + p.wage, 0);
+    const playerWages = this.players.reduce((s, p) => s + p.wage, 0);
+    return playerWages + (this.manager?.wage || 0) + (this.director?.wage || 0);
   }
 }
 
