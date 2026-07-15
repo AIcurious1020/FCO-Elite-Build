@@ -2439,6 +2439,7 @@ function renderTransfers() {
   }).join('');
 
   document.getElementById('transfers').innerHTML = `
+    ${renderDealRoom(club)}
     <div class="card">
       <div class="flex-between">
         <h2 class="mb0">Transfer Market</h2>
@@ -2472,6 +2473,18 @@ function renderTransfers() {
   document.querySelectorAll('[data-buy]').forEach(btn => {
     btn.addEventListener('click', () => openBid(btn.dataset.buy));
   });
+  document.querySelectorAll('[data-deal-approve]').forEach(btn => {
+    btn.addEventListener('click', () => approveDealRoomTarget(btn.dataset.dealApprove));
+  });
+  document.querySelectorAll('[data-deal-cheaper]').forEach(btn => {
+    btn.addEventListener('click', () => askForCheaperOption(btn.dataset.dealCheaper));
+  });
+  document.querySelectorAll('[data-deal-defer]').forEach(btn => {
+    btn.addEventListener('click', () => deferDealRoomTarget(btn.dataset.dealDefer));
+  });
+  document.querySelectorAll('[data-deal-reject]').forEach(btn => {
+    btn.addEventListener('click', () => rejectDealRoomTarget(btn.dataset.dealReject));
+  });
   document.getElementById('transferPositionFilter').addEventListener('change', e => {
     state.transferFilters = { ...(state.transferFilters || {}), position: e.target.value };
     render();
@@ -2485,6 +2498,153 @@ function renderTransfers() {
     addStory(transferMarketStory(state.market, club));
     render();
   });
+}
+
+function renderDealRoom(club) {
+  const targets = dealRoomTargets(club);
+  const latest = state.worldActivity
+    .slice(0, 3)
+    .map(activity => ({
+      ...activity,
+      clubObj: state.league.clubsById[activity.club],
+    }))
+    .filter(activity => activity.clubObj);
+  return `<div class="card">
+    <div class="flex-between">
+      <div>
+        <h2 class="mb0">Deal Room</h2>
+        <p class="muted small">Director of Football recommendations with manager input before you approve spending.</p>
+      </div>
+      <span class="muted small">${RECRUITMENT_POLICIES[state.boardPlan.recruitmentPolicy]?.label || 'Balanced'}</span>
+    </div>
+    <div class="grid mt">
+      ${targets.map(target => renderDealRoomTarget(target)).join('') || '<p class="muted small">No suitable recommendations. Refresh the market to scout new targets.</p>'}
+    </div>
+    ${latest.length ? `<h3 class="mt">Rival Movement</h3>
+      <div class="headline-list mt">
+        ${latest.map(activity => `<article>
+          <span class="story-kicker">Transfers</span>
+          <strong>${activity.clubObj.short} signed ${activity.player.name}</strong>
+          <span class="muted small">£${fmt(activity.fee)} · ${activity.needLabel}</span>
+        </article>`).join('')}
+      </div>` : ''}
+  </div>`;
+}
+
+function dealRoomTargets(club) {
+  return state.market
+    .map(player => {
+      const fit = transferFit(player, club);
+      const policyFit = transferPolicyScore(player, club, fit);
+      const manager = managerTargetView(player, club, fit);
+      return { player, fit, policyFit, manager };
+    })
+    .sort((a, b) => b.policyFit.score - a.policyFit.score || b.player.overall - a.player.overall)
+    .slice(0, 3);
+}
+
+function renderDealRoomTarget(target) {
+  const { player, fit, policyFit, manager } = target;
+  const rec = policyRecommendation(policyFit.score);
+  const affordableClass = fit.affordable ? 'success' : 'danger';
+  return `<div class="mini-panel">
+    <span class="muted small">${player.position} · ${player.age} yrs · ${player.overall} OVR</span>
+    <strong>${player.name}</strong>
+    <span class="${bandClass(rec.band)} small">DoF: ${rec.label} · ${policyFit.score}/100</span>
+    <span class="${bandClass(manager.band)} small">Manager: ${manager.label}</span>
+    <span class="muted small">${manager.text}</span>
+    <span class="${affordableClass} small">Ask £${fmt(fit.askingPrice)} · wage £${fmt(player.wage)}/wk</span>
+    <div class="flex mt action-row">
+      <button class="btn btn-sm" data-deal-approve="${player.id}" ${fit.affordable ? '' : 'disabled'}>Approve bid</button>
+      <button class="btn-ghost btn-sm" data-deal-cheaper="${player.id}">Cheaper option</button>
+      <button class="btn-ghost btn-sm" data-deal-defer="${player.id}">Defer</button>
+      <button class="btn-ghost btn-sm danger-action" data-deal-reject="${player.id}">Reject</button>
+    </div>
+  </div>`;
+}
+
+function managerTargetView(player, club, fit = transferFit(player, club)) {
+  const samePosition = club.players.filter(p => p.position === player.position);
+  const best = samePosition.slice().sort((a, b) => b.overall - a.overall)[0];
+  const academyBlock = player.age >= 29 && samePosition.some(p => p.age <= 22 && p.potential >= player.overall - 2);
+  if (academyBlock) {
+    return { band: 'warning', label: 'Blocks academy pathway', text: 'The manager worries this signing slows a young player route.' };
+  }
+  if (fit.need?.priority === 'urgent' || fit.improvement >= 6) {
+    return { band: 'safe', label: 'Manager wants him', text: 'The manager sees a clear role and expects immediate squad impact.' };
+  }
+  if (fit.improvement >= 1 || !best) {
+    return { band: 'warning', label: 'Useful squad depth', text: 'The manager would use him, but not as a transformational signing.' };
+  }
+  return { band: 'danger', label: 'Not a priority', text: 'The manager thinks funds may be better used elsewhere.' };
+}
+
+function approveDealRoomTarget(id) {
+  const club = userClub();
+  const target = state.market.find(p => p.id === id);
+  if (!target) return;
+  const fit = transferFit(target, club);
+  if (!fit.affordable) { alert('You cannot afford the asking price.'); return; }
+  const wageAfter = projectedWageRatio(club, target);
+  completeTransferIn(target, fit.askingPrice, club, state.market);
+  applyChairmanTrait({
+    ambition: fit.improvement >= 5 ? 4 : 1,
+    prudence: wageAfter > 0.8 ? -3 : 1,
+    youth: target.age <= 23 ? 3 : target.age >= 30 ? -2 : 0,
+    delegation: 2,
+  });
+  addStory(transferCompletedStory({ player: target, fee: fit.askingPrice, club, wageRatio: projectedWageRatio(club) }));
+  alert(`${target.name} joins ${club.name} for £${fmt(fit.askingPrice)}.`);
+  render();
+}
+
+function askForCheaperOption(id) {
+  const club = userClub();
+  const target = state.market.find(p => p.id === id);
+  if (!target) return;
+  state.boardPlan.recruitmentPolicy = 'bargains';
+  state.market = guidedMarket(club);
+  applyChairmanTrait({ prudence: 4, delegation: 2, ambition: -1 });
+  addStory({
+    title: `${club.short} ask DoF for cheaper options`,
+    body: `${target.name} was parked while the Director of Football searches for better value under a bargain-market brief.`,
+    type: 'transfer',
+    category: 'Transfers',
+    importance: 1,
+  });
+  render();
+}
+
+function deferDealRoomTarget(id) {
+  const club = userClub();
+  const target = state.market.find(p => p.id === id);
+  if (!target) return;
+  applyChairmanTrait({ prudence: 2, patience: 2 });
+  addStory({
+    title: `${club.short} defer ${target.name} decision`,
+    body: `The chairman delayed a decision on ${target.name} until the club has clearer financial or squad evidence.`,
+    type: 'transfer',
+    category: 'Transfers',
+    importance: 1,
+  });
+  alert(`${target.name} remains on the list. The deal has been deferred.`);
+  render();
+}
+
+function rejectDealRoomTarget(id) {
+  const club = userClub();
+  const target = state.market.find(p => p.id === id);
+  if (!target) return;
+  state.market = state.market.filter(p => p.id !== id);
+  applyChairmanTrait({ prudence: 2, delegation: -1 });
+  addStory({
+    title: `${club.short} reject ${target.name} proposal`,
+    body: `${target.name} was rejected as not aligned with the current chairman strategy.`,
+    type: 'transfer',
+    category: 'Transfers',
+    importance: 1,
+  });
+  render();
 }
 
 function openBid(id) {
