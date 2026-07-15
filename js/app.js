@@ -828,12 +828,17 @@ function renderDashboardAlerts({ pressure, contractRisks, injuries, track }) {
 
 function renderDashboardMatch(preview, nextEvent) {
   if (!preview) {
+    const isCupRound = nextEvent?.type === 'cup';
+    const title = nextEvent ? (isCupRound ? 'Cup Round' : 'Calendar Date') : 'Next Fixture';
+    const badge = nextEvent ? (isCupRound ? 'Simulate' : 'Continue') : 'Complete';
+    const buttonText = isCupRound ? 'Simulate Cup Round' : 'Continue Calendar';
     return `<div class="card mb0 match-card-compact">
       <div class="flex-between">
-        <h2 class="mb0">Next Fixture</h2>
-        <span class="pill obj-pending">Complete</span>
+        <h2 class="mb0">${title}</h2>
+        <span class="pill obj-pending">${badge}</span>
       </div>
       ${renderCalendarEventPreview(nextEvent)}
+      ${nextEvent ? `<button class="btn btn-lg mt" id="playNext">${buttonText}</button>` : ''}
       ${!nextEvent ? `<button class="btn btn-success btn-lg mt" id="newSeason">Start Season ${state.season + 1}</button>` : ''}
     </div>`;
   }
