@@ -13,7 +13,7 @@ A web-first football club management sim inspired by Football Chairman Pro 2, re
 
 | Area | What it does |
 |-----|--------------|
-| Dashboard | Chairman brief, linkable club-control boxes, key status, next fixture, and latest headlines |
+| Dashboard | Chairman brief plus linkable hub boxes with status and action summaries |
 | News | Season stories covering results, transfers, injuries, cups, and rival activity |
 | Club | Club identity, chairman profile, history, honours, records, and fan mood |
 | Boardroom | Decision-first Chairman Agenda, Director of Football, recruitment policy, contract renewals, budget priority, contextual manager/supporter interventions |

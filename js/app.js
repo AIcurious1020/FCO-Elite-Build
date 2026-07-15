@@ -672,8 +672,6 @@ function renderDashboard() {
   const club = userClub();
   const table = divisionStandings(state.league.clubs, club.division);
   const pos = table.indexOf(club) + 1;
-  const divInfo = DIVISIONS[club.division];
-  const totalEvents = state.seasonCalendar.length;
   const nextEvent = nextCalendarEvent();
   const health = financialHealth(club);
   const forecast = financeForecast(club);
@@ -688,96 +686,44 @@ function renderDashboard() {
   const preview = nextFixture ? matchPreview(nextFixture, nextEvent) : null;
 
   document.getElementById('dashboard').innerHTML = `
-    <div class="dashboard-hero">
-      <div>
-        <h2 class="mb0">${club.name}</h2>
-        <p class="muted small">${divInfo.name} · Season ${state.season} · Event ${Math.min(state.currentEvent + 1, totalEvents)} of ${totalEvents}</p>
-      </div>
-      <div class="dashboard-record">
-        <strong>${club.won}-${club.drawn}-${club.lost}</strong>
-        <span class="muted small">${club.points} pts</span>
-      </div>
-    </div>
-
     ${renderChairmanBrief({ club, pos, track, pressure, nextEvent, preview })}
 
-    ${renderDashboardHub({ club, pos, track, forecast, health, contractRisks, injuries, nextEvent })}
-
-    ${renderDashboardAlerts({ pressure, contractRisks, injuries, track })}
-
-    ${state.decisions.length ? renderDecisionInbox(true) : ''}
-
-    <div class="dashboard-main">
-      ${renderDashboardMatch(preview, nextEvent)}
-      ${renderDashboardNews()}
-    </div>
-
-    <div class="dashboard-secondary">
-      <div class="card mb0">
-        <div class="flex-between">
-          <h2 class="mb0">Board Objective</h2>
-          <span class="pill obj-${track.state}">${trackDot(track.state)} ${trackWord(track.state)}</span>
-        </div>
-        <p class="mt"><strong>${obj ? obj.label : '—'}</strong></p>
-        <p class="small ${trackClass(track.state)}">${track.text}</p>
-        ${jobBanner()}
-      </div>
-      <div class="card mb0">
-        <div class="flex-between">
-          <h2 class="mb0">Season Calendar</h2>
-          <button class="btn-ghost btn-sm" id="openFixtures">Open</button>
-        </div>
-        ${renderCalendarMini()}
-      </div>
-    </div>
-
-    ${renderSeasonTimeline()}
+    ${renderDashboardHub({ club, pos, track, forecast, health, contractRisks, injuries, nextEvent, preview })}
   `;
 
-  const playBtn = document.getElementById('playNext');
-  if (playBtn) playBtn.addEventListener('click', onPlayNext);
   const briefPlayBtn = document.getElementById('briefPlayNext');
   if (briefPlayBtn) briefPlayBtn.addEventListener('click', onPlayNext);
-  const openFixtures = document.getElementById('openFixtures');
-  if (openFixtures) openFixtures.addEventListener('click', () => switchTab('fixtures'));
-  const ns = document.getElementById('newSeason');
-  if (ns) {
-    ns.disabled = state.cup?.status === 'active';
-    ns.addEventListener('click', onNewSeason);
-  }
   const briefNewSeason = document.getElementById('briefNewSeason');
   if (briefNewSeason) {
     briefNewSeason.disabled = state.cup?.status === 'active';
     briefNewSeason.addEventListener('click', onNewSeason);
   }
-  const openNews = document.getElementById('openNews');
-  if (openNews) openNews.addEventListener('click', () => switchTab('news'));
-  const openTimelineCalendar = document.getElementById('openTimelineCalendar');
-  if (openTimelineCalendar) openTimelineCalendar.addEventListener('click', () => switchTab('fixtures'));
   document.querySelectorAll('[data-dashboard-tab]').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.dashboardTab));
   });
-  bindDecisionButtons();
 }
 
-function renderDashboardHub({ club, pos, track, forecast, health, contractRisks, injuries, nextEvent }) {
+function renderDashboardHub({ club, pos, track, forecast, health, contractRisks, injuries, nextEvent, preview }) {
   const dealCount = dealRoomTargets(club).length;
   const cupLabel = state.cup?.status === 'complete' ? 'Complete' : cupCurrentRound(state.cup)?.name || 'Scheduled';
   const finance = financeHealthScore(club, forecast, health);
   const manager = managerHealthScore(club);
   const squad = squadHealthScore(club, injuries, contractRisks);
+  const latestHeadline = normaliseStory((state.inbox || [])[0] || {});
+  const nextSummary = dashboardEventSummary(nextEvent, preview);
+  const pressure = currentPressure(club, pos, track);
   const areas = [
-    { tab: 'boardroom', icon: '📋', label: 'Boardroom', value: state.decisions.length ? `${state.decisions.length} pending` : 'Clear', detail: 'Decisions', band: state.decisions.length ? 'danger' : 'safe' },
-    { tab: 'table', icon: '🏆', label: 'League', value: `${pos}${ord(pos)}`, detail: trackWord(track.state), band: track.state === 'ontrack' ? 'safe' : track.state === 'close' ? 'warning' : track.state === 'offtrack' ? 'danger' : 'ok' },
-    { tab: 'finance', icon: '🏟', label: 'Finance', value: `${finance.score}%`, detail: health.label, band: finance.band },
-    { tab: 'manager', icon: '🧢', label: 'Manager', value: `${manager.score}%`, detail: manager.label, band: manager.band },
-    { tab: 'squad', icon: '👕', label: 'Squad', value: `${squad.score}%`, detail: squad.label, band: squad.band },
-    { tab: 'transfers', icon: '🤝', label: 'Deal Room', value: dealCount ? `${dealCount} proposal${dealCount === 1 ? '' : 's'}` : 'No approval', band: dealCount ? 'warning' : 'ok' },
-    { tab: 'fixtures', icon: '📅', label: 'Fixtures', value: nextEvent?.date || 'Season complete', band: nextEvent ? 'ok' : 'safe' },
-    { tab: 'news', icon: '📰', label: 'News', value: `${state.inbox.length} stories`, band: 'ok' },
-    { tab: 'club', icon: '💼', label: 'Club', value: `${state.confidence}%`, detail: confidenceLabel(state.confidence).label, band: scoreBand(state.confidence) },
-    { tab: 'cup', icon: '🏅', label: 'Cup', value: cupLabel, band: state.cup?.status === 'complete' ? 'safe' : 'ok' },
-    { tab: 'stadium', icon: '🏗', label: 'Stadium', value: `${fmt(club.stadiumCapacity)} seats`, band: 'ok' },
+    { tab: 'boardroom', icon: '📋', label: 'Boardroom', value: state.decisions.length ? `${state.decisions.length} pending` : 'Clear', detail: state.decisions[0]?.title || 'No chairman action', summary: state.decisions[0]?.body || 'No decision required before the next fixture.', band: state.decisions.length ? 'danger' : 'safe' },
+    { tab: 'squad', icon: '👕', label: 'Squad', value: `${squad.score}%`, detail: squad.label, summary: squadHubSummary(injuries, contractRisks), band: squad.band },
+    { tab: 'fixtures', icon: '📅', label: 'Fixtures', value: nextSummary.value, detail: nextSummary.detail, summary: nextSummary.summary, band: nextEvent ? 'ok' : 'safe' },
+    { tab: 'news', icon: '📰', label: 'News', value: `${state.inbox.length} stories`, detail: latestHeadline.title || 'No headline yet', summary: latestHeadline.body || 'Season stories will appear as events unfold.', band: latestHeadline.importance >= 3 ? 'warning' : 'ok' },
+    { tab: 'table', icon: '🏆', label: 'League', value: `${pos}${ord(pos)}`, detail: trackWord(track.state), summary: track.text, band: track.state === 'ontrack' ? 'safe' : track.state === 'close' ? 'warning' : track.state === 'offtrack' ? 'danger' : 'ok' },
+    { tab: 'finance', icon: '🏟', label: 'Finance', value: `${finance.score}%`, detail: health.label, summary: financeHubSummary(forecast), band: finance.band },
+    { tab: 'manager', icon: '🧢', label: 'Manager', value: `${manager.score}%`, detail: manager.label, summary: managerHubSummary(club, track, pressure), band: manager.band },
+    { tab: 'transfers', icon: '🤝', label: 'Deal Room', value: dealCount ? `${dealCount} proposal${dealCount === 1 ? '' : 's'}` : 'No approval', detail: dealCount ? 'DoF review live' : 'DoF monitoring', summary: dealCount ? 'Review recommended targets before committing money.' : 'The DoF will return when a proper squad need is found.', band: dealCount ? 'warning' : 'ok' },
+    { tab: 'club', icon: '💼', label: 'Club', value: `${state.confidence}%`, detail: confidenceLabel(state.confidence).label, summary: `Supporter trust ${state.fanTrust}/100. ${pressure.label}.`, band: scoreBand(state.confidence) },
+    { tab: 'cup', icon: '🏅', label: 'Cup', value: cupLabel, detail: state.cup?.status === 'complete' ? 'Finished' : 'In calendar', summary: cupHubSummary(club), band: state.cup?.status === 'complete' ? 'safe' : 'ok' },
+    { tab: 'stadium', icon: '🏗', label: 'Stadium', value: `${fmt(club.stadiumCapacity)} seats`, detail: `Academy ${club.academy} · Training ${club.training}`, summary: 'Review facilities, tickets, academy, and training investment.', band: 'ok' },
   ];
   return `<div class="dashboard-hub">
     ${areas.map(area => `<button class="hub-card ${bandClass(area.band)}" data-dashboard-tab="${area.tab}">
@@ -786,14 +732,71 @@ function renderDashboardHub({ club, pos, track, forecast, health, contractRisks,
         <strong>${area.label}</strong>
         <small>${area.value}</small>
         ${area.detail ? `<em>${area.detail}</em>` : ''}
+        <span class="hub-summary">${area.summary}</span>
       </span>
     </button>`).join('')}
   </div>`;
 }
 
+function dashboardEventSummary(event, preview) {
+  if (!event) {
+    return {
+      value: 'Season complete',
+      detail: 'Ready to review',
+      summary: `Start Season ${state.season + 1} from the chairman brief when ready.`,
+    };
+  }
+  if (preview) {
+    return {
+      value: event.date || 'Next date',
+      detail: `${preview.home.short} vs ${preview.away.short}`,
+      summary: `${preview.competition}${preview.roundName ? `, ${preview.roundName}` : ''}. Play this fixture from the chairman brief.`,
+    };
+  }
+  if (event.type === 'cup') {
+    return {
+      value: event.date || 'Cup date',
+      detail: event.label,
+      summary: 'Cup round scheduled. Simulate it from the chairman brief to progress the draw.',
+    };
+  }
+  return {
+    value: event.date || 'Calendar',
+    detail: event.label || 'Scheduled',
+    summary: 'Open fixtures for the full season list.',
+  };
+}
+
+function squadHubSummary(injuries, contractRisks) {
+  const parts = [];
+  if (injuries.length) parts.push(`${injuries.length} injured`);
+  if (contractRisks.length) parts.push(`${contractRisks.length} contract${contractRisks.length === 1 ? '' : 's'} to review`);
+  return parts.length ? parts.join(' · ') : 'No injuries or urgent contract warnings.';
+}
+
+function financeHubSummary(forecast) {
+  if (forecast.risk === 'danger') return `Cash runway is tight. Protect spending before approving new commitments.`;
+  if (forecast.risk === 'warning') return `${forecast.label}. Wage room: £${fmt(forecast.remainingWeeklyWage)}/wk.`;
+  return `Transfer pot £${fmt(forecast.transferBudget)}. Wage room £${fmt(forecast.remainingWeeklyWage)}/wk.`;
+}
+
+function managerHubSummary(club, track, pressure) {
+  if (!club.manager) return 'Hire a manager before the season can settle.';
+  if ((club.manager.confidence ?? 60) <= 45) return 'Confidence is low. Consider a manager meeting.';
+  if (track.state === 'offtrack' || pressure.band === 'danger') return 'Results pressure is rising. Review backing or expectations.';
+  return 'No manager intervention needed this week.';
+}
+
+function cupHubSummary(club) {
+  const status = cupStatus(state.cup, club.id);
+  return status.text || 'Cup progress will update through scheduled calendar rounds.';
+}
+
 function renderChairmanBrief({ club, pos, track, pressure, nextEvent, preview }) {
   const pending = state.decisions || [];
   const latestResult = (state.resultMemory || []).find(item => item.involved);
+  const objectiveLabel = state.objective?.label || 'No objective set';
+  const objectiveText = `${objectiveLabel}. ${pos}${ord(pos)}: ${track.text}`;
   const action = pending.length
     ? {
       label: 'Review Boardroom',
@@ -826,6 +829,7 @@ function renderChairmanBrief({ club, pos, track, pressure, nextEvent, preview })
     <div>
       <span class="story-kicker">Chairman Brief</span>
       <h2 class="mb0">${action.title}</h2>
+      <p class="objective-tracker ${bandClass(track.state === 'offtrack' ? 'danger' : track.state === 'close' ? 'warning' : 'safe')}">${trackDot(track.state)} Board objective: ${objectiveText}</p>
       <p class="muted small mt">${action.text}</p>
       <p class="small ${bandClass(track.state === 'offtrack' ? 'danger' : pressure.band)} mt">${resultText}</p>
     </div>
@@ -847,131 +851,6 @@ function briefResultText(memory) {
   const away = clubs[memory.away]?.short || 'Away';
   const score = `${home} ${memory.homeGoals}-${memory.awayGoals} ${away}`;
   return memory.involved && memory.outcome ? `${score} (${memory.outcome})` : `${memory.round || 'Round'}: ${score}`;
-}
-
-function renderDashboardAlerts({ pressure, contractRisks, injuries, track }) {
-  const alerts = [];
-  if (pressure.band === 'danger' || pressure.band === 'warning') {
-    alerts.push({
-      tone: pressure.band,
-      icon: '🎙',
-      title: pressure.label,
-      text: pressure.text,
-      tab: 'boardroom',
-      action: 'Respond',
-    });
-  }
-  if (contractRisks.length) {
-    alerts.push({
-      tone: contractRisks.some(p => (p.contractYears ?? 2) <= 0) ? 'danger' : 'warning',
-      icon: '✍',
-      title: `${contractRisks.length} contract${contractRisks.length === 1 ? '' : 's'} need attention`,
-      text: contractRisks.map(p => `${p.name} (${contractStatus(p).label})`).join(', '),
-      tab: 'boardroom',
-      action: 'Review',
-    });
-  }
-  if (injuries.length) {
-    alerts.push({
-      tone: 'warning',
-      icon: '🩹',
-      title: `${injuries.length} unavailable`,
-      text: injuries.slice(0, 2).map(p => `${p.name} ${p.injuryWeeks}w`).join(', '),
-      tab: 'squad',
-      action: 'Squad',
-    });
-  }
-  if (track.state === 'offtrack') {
-    alerts.push({
-      tone: 'danger',
-      icon: '📉',
-      title: 'Objective off track',
-      text: track.text,
-      tab: 'table',
-      action: 'Table',
-    });
-  }
-  if (!alerts.length) {
-    alerts.push({
-      tone: 'safe',
-      icon: '✓',
-      title: 'No urgent chairman actions',
-      text: 'Club health is stable. Review the next fixture when ready.',
-      tab: 'boardroom',
-      action: 'Boardroom',
-    });
-  }
-
-  return `<div class="alert-strip">
-    ${alerts.slice(0, 3).map(alert => `<div class="dashboard-alert ${bandClass(alert.tone)}">
-      <span class="alert-icon">${alert.icon}</span>
-      <div>
-        <strong>${alert.title}</strong>
-        <p class="muted small">${alert.text}</p>
-      </div>
-      <button class="btn-ghost btn-sm" data-dashboard-tab="${alert.tab}">${alert.action}</button>
-    </div>`).join('')}
-  </div>`;
-}
-
-function renderDashboardMatch(preview, nextEvent) {
-  if (!preview) {
-    const isCupRound = nextEvent?.type === 'cup';
-    const title = nextEvent ? (isCupRound ? 'Cup Round' : 'Calendar Date') : 'Next Fixture';
-    const badge = nextEvent ? (isCupRound ? 'Simulate' : 'Continue') : 'Complete';
-    const buttonText = isCupRound ? 'Simulate Cup Round' : 'Continue Calendar';
-    return `<div class="card mb0 match-card-compact">
-      <div class="flex-between">
-        <h2 class="mb0">${title}</h2>
-        <span class="pill obj-pending">${badge}</span>
-      </div>
-      ${renderCalendarEventPreview(nextEvent)}
-      ${nextEvent ? `<button class="btn btn-lg mt" id="playNext">${buttonText}</button>` : ''}
-      ${!nextEvent ? `<button class="btn btn-success btn-lg mt" id="newSeason">Start Season ${state.season + 1}</button>` : ''}
-    </div>`;
-  }
-  const userProb = pct(preview.userWin);
-  const oppProb = pct(preview.oppWin);
-  const warning = dashboardMatchWarning(preview);
-  return `<div class="card mb0 match-card-compact">
-    <div class="flex-between">
-      <h2 class="mb0">Next Fixture</h2>
-      <span class="pill ${preview.userEdge >= 0 ? 'obj-ontrack' : 'obj-close'}">${userProb}% win</span>
-    </div>
-    <p class="muted small mt">${preview.date ? `${preview.date} · ` : ''}${preview.competition}${preview.roundName ? ` · ${preview.roundName}` : ''}</p>
-    <div class="fixture-versus">
-      <strong>${preview.home.short}</strong>
-      <span>vs</span>
-      <strong>${preview.away.short}</strong>
-    </div>
-    <div class="compact-prob mt">
-      <span style="width:${userProb}%"></span>
-    </div>
-    <div class="flex-between mt">
-      <span class="small success">You ${userProb}%</span>
-      <span class="small muted">Draw ${pct(preview.probs.draw)}%</span>
-      <span class="small danger">${preview.opponent.short} ${oppProb}%</span>
-    </div>
-    <p class="dashboard-warning ${warning.tone}">${warning.text}</p>
-    <button class="btn btn-lg mt" id="playNext">Play Next Fixture</button>
-  </div>`;
-}
-
-function renderDashboardNews() {
-  const items = (state.inbox || []).slice(0, 3);
-  return `<div class="card mb0 news-compact">
-    <div class="flex-between">
-      <h2 class="mb0">Latest Headlines</h2>
-      <button class="btn-ghost btn-sm" id="openNews">News</button>
-    </div>
-    ${items.length ? `<div class="headline-list mt">${items.map(raw => {
-      const item = normaliseStory(raw);
-      return `<article>
-        <span class="story-kicker">${item.category}</span>
-        <strong>${item.title}</strong>
-      </article>`;
-    }).join('')}</div>` : '<p class="muted small mt">No stories yet.</p>'}
-  </div>`;
 }
 
 function dashboardMatchWarning(preview) {
@@ -1034,27 +913,6 @@ function renderDevelopmentSummary() {
     </div>
     <p class="muted small mt">${summary.text}</p>
     ${prospect ? `<p class="small gold">Top prospect: ${prospect.name} · ${prospect.position} · ${prospect.overall} OVR / ${prospect.potential} POT</p>` : ''}
-  </div>`;
-}
-
-function renderSeasonTimeline() {
-  if (!state.resultMemory.length) return '';
-  const items = state.resultMemory.slice(0, 5).map(memory => {
-    const home = state.league.clubsById[memory.home];
-    const away = state.league.clubsById[memory.away];
-    const result = calendarResultSummary(memory);
-    return `<li>
-      <strong>${memory.date}</strong> · ${memory.competition} · ${memory.round}
-      <span class="${memory.outcome === 'W' ? 'success' : memory.outcome === 'L' ? 'danger' : 'warning'}">${result.text}</span>
-      <span class="muted small">${memory.involved ? `vs ${memory.opponent ? state.league.clubsById[memory.opponent].short : ''}` : `${home.short}/${away.short}`}</span>
-    </li>`;
-  }).join('');
-  return `<div class="card">
-    <div class="flex-between">
-      <h2 class="mb0">Season Timeline</h2>
-      <button class="btn-ghost btn-sm" id="openTimelineCalendar">Open calendar</button>
-    </div>
-    <ul class="plain-list mt">${items}</ul>
   </div>`;
 }
 
