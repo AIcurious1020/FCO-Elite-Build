@@ -22,7 +22,7 @@ A web-first football club management sim inspired by Football Chairman Pro 2, re
 | Fixtures | Your full season calendar, including scheduled league and cup dates |
 | Cup | Integrated knockout competition played during the normal season |
 | Table | Live standings (P, W, D, L, GF, GA, GD, Pts) |
-| Transfers | Deal Room approvals, scout targets, DoF and manager views, bid with clear accept/reject rules |
+| Transfers | Need-led Deal Room approvals, scout targets, DoF and manager views, bid with clear accept/reject rules |
 | Finance | Projected revenue/costs, P&L, wage-to-revenue health band |
 | Stadium | Expand capacity, set ticket price, upgrade academy & training |
 

@@ -2517,9 +2517,9 @@ function renderDealRoom(club) {
       </div>
       <span class="muted small">${RECRUITMENT_POLICIES[state.boardPlan.recruitmentPolicy]?.label || 'Balanced'}</span>
     </div>
-    <div class="grid mt">
-      ${targets.map(target => renderDealRoomTarget(target)).join('') || '<p class="muted small">No suitable recommendations. Refresh the market to scout new targets.</p>'}
-    </div>
+    ${targets.length
+      ? `<div class="grid mt">${targets.map(target => renderDealRoomTarget(target)).join('')}</div>`
+      : '<p class="muted small mt">No live deal requires chairman approval. The DoF will only bring you players who match a squad gap, manager request, or clear upgrade brief.</p>'}
     ${latest.length ? `<h3 class="mt">Rival Movement</h3>
       <div class="headline-list mt">
         ${latest.map(activity => `<article>
@@ -2532,27 +2532,38 @@ function renderDealRoom(club) {
 }
 
 function dealRoomTargets(club) {
-  return state.market
-    .map(player => {
-      const fit = transferFit(player, club);
-      const policyFit = transferPolicyScore(player, club, fit);
-      const manager = managerTargetView(player, club, fit);
-      return { player, fit, policyFit, manager };
-    })
-    .sort((a, b) => b.policyFit.score - a.policyFit.score || b.player.overall - a.player.overall)
-    .slice(0, 3);
+  const briefs = recruitmentBriefs(club);
+  const used = new Set();
+  return briefs.map(brief => {
+    const options = state.market
+      .filter(player => !used.has(player.id) && player.position === brief.position)
+      .map(player => {
+        const fit = transferFit(player, club);
+        const policyFit = transferPolicyScore(player, club, fit);
+        const manager = managerTargetView(player, club, fit, brief);
+        return { player, fit, policyFit, manager, brief, briefScore: dealBriefScore(player, fit, policyFit, manager, brief) };
+      })
+      .filter(target => target.briefScore >= 58 && target.manager.label !== 'Not a priority')
+      .sort((a, b) => b.briefScore - a.briefScore || b.policyFit.score - a.policyFit.score);
+    const best = options[0];
+    if (best) used.add(best.player.id);
+    return best || null;
+  }).filter(Boolean).slice(0, 2);
 }
 
 function renderDealRoomTarget(target) {
-  const { player, fit, policyFit, manager } = target;
+  const { player, fit, policyFit, manager, brief, briefScore } = target;
   const rec = policyRecommendation(policyFit.score);
   const affordableClass = fit.affordable ? 'success' : 'danger';
   return `<div class="mini-panel">
+    <span class="story-kicker">${brief.source}</span>
     <span class="muted small">${player.position} · ${player.age} yrs · ${player.overall} OVR</span>
     <strong>${player.name}</strong>
+    <span class="small">${brief.label}</span>
     <span class="${bandClass(rec.band)} small">DoF: ${rec.label} · ${policyFit.score}/100</span>
     <span class="${bandClass(manager.band)} small">Manager: ${manager.label}</span>
     <span class="muted small">${manager.text}</span>
+    <span class="muted small">Brief fit ${briefScore}/100</span>
     <span class="${affordableClass} small">Ask £${fmt(fit.askingPrice)} · wage £${fmt(player.wage)}/wk</span>
     <div class="flex mt action-row">
       <button class="btn btn-sm" data-deal-approve="${player.id}" ${fit.affordable ? '' : 'disabled'}>Approve bid</button>
@@ -2563,10 +2574,68 @@ function renderDealRoomTarget(target) {
   </div>`;
 }
 
-function managerTargetView(player, club, fit = transferFit(player, club)) {
+function recruitmentBriefs(club) {
+  const avg = avgOverall(club);
+  const needs = squadNeeds(club)
+    .filter(need => need.priority !== 'covered')
+    .map(need => ({
+      position: need.position,
+      priority: need.priority === 'urgent' ? 3 : 2,
+      source: need.priority === 'urgent' ? 'Squad Need' : 'Squad Upgrade',
+      label: need.priority === 'urgent'
+        ? `${need.position} depth is below the required level`
+        : `${need.position} is below the squad average and can be upgraded`,
+      minImprovement: need.priority === 'urgent' ? -2 : 3,
+    }));
+
+  const style = club.manager?.style || 'balanced';
+  const directive = club.manager?.directive || 'trust';
+  const stylePositions = {
+    attacking: ['FWD', 'MID'],
+    high_press: ['MID', 'FWD'],
+    pragmatic: ['DEF', 'GK'],
+    youth: ['MID', 'FWD', 'DEF'],
+    balanced: ['MID', 'DEF'],
+  }[directive === 'youth' ? 'youth' : style] || ['MID', 'DEF'];
+
+  stylePositions.forEach(position => {
+    const best = club.players.filter(p => p.position === position).sort((a, b) => b.overall - a.overall)[0];
+    const alreadyCovered = needs.some(need => need.position === position);
+    const wantsUpgrade = !best || best.overall < avg + (style === 'youth' || directive === 'youth' ? 0 : 2);
+    if (!alreadyCovered && wantsUpgrade) {
+      needs.push({
+        position,
+        priority: 2,
+        source: 'Manager Request',
+        label: `${club.manager?.name || 'The manager'} wants a ${position} profile for the current style`,
+        minImprovement: style === 'youth' || directive === 'youth' ? 0 : 2,
+        youth: style === 'youth' || directive === 'youth',
+      });
+    }
+  });
+
+  return needs.sort((a, b) => b.priority - a.priority).slice(0, 4);
+}
+
+function dealBriefScore(player, fit, policyFit, manager, brief) {
+  let score = Math.round(policyFit.score * 0.55);
+  score += brief.priority * 8;
+  score += fit.affordable ? 10 : -18;
+  score += Math.max(-8, Math.min(18, fit.improvement * 2));
+  if (brief.youth) score += player.age <= 23 ? 12 : player.age >= 29 ? -12 : 0;
+  if (fit.improvement < brief.minImprovement) score -= 16;
+  if (manager.band === 'safe') score += 10;
+  if (manager.band === 'danger') score -= 14;
+  return clampScore(score);
+}
+
+function managerTargetView(player, club, fit = transferFit(player, club), brief = null) {
   const samePosition = club.players.filter(p => p.position === player.position);
   const best = samePosition.slice().sort((a, b) => b.overall - a.overall)[0];
   const academyBlock = player.age >= 29 && samePosition.some(p => p.age <= 22 && p.potential >= player.overall - 2);
+  if (brief?.source === 'Manager Request' && fit.improvement >= brief.minImprovement) {
+    return { band: 'safe', label: 'Manager requested profile', text: 'The manager asked staff to find this type of player.' };
+  }
   if (academyBlock) {
     return { band: 'warning', label: 'Blocks academy pathway', text: 'The manager worries this signing slows a young player route.' };
   }
@@ -2603,6 +2672,7 @@ function askForCheaperOption(id) {
   const target = state.market.find(p => p.id === id);
   if (!target) return;
   state.boardPlan.recruitmentPolicy = 'bargains';
+  state.transferFilters = { ...(state.transferFilters || {}), position: target.position, affordableOnly: true };
   state.market = guidedMarket(club);
   applyChairmanTrait({ prudence: 4, delegation: 2, ambition: -1 });
   addStory({
