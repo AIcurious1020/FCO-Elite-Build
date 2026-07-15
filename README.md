@@ -17,16 +17,26 @@ A web-first football club management sim inspired by Football Chairman Pro 2, re
 | News | Season stories covering results, transfers, injuries, cups, and rival activity |
 | Club | Club identity, chairman profile, history, honours, records, and fan mood |
 | Boardroom | Decision-first Chairman Agenda, Director of Football, recruitment policy, contract renewals, budget priority, contextual manager/supporter interventions |
-| Squad | Full squad with position-weighted overalls, best-XI highlighting, contract status, manager player views, sell players |
+| Squad | Full squad with position-weighted overalls, best-XI highlighting, contract status, manager player views, invite player sale offers |
 | Manager | Hire/replace the head coach, set chairman instructions, and review tactical output |
 | Fixtures | Your full season calendar, including scheduled league and cup dates |
 | Cup | Integrated knockout competition played during the normal season |
 | Table | Live standings (P, W, D, L, GF, GA, GD, Pts) |
-| Transfers | Periodic need-led Deal Room approvals, scout targets, DoF and manager views, bid with clear accept/reject rules |
+| Transfers | Outgoing offer holding room, replacement search, periodic need-led Deal Room approvals, scout targets, DoF and manager views, bid with clear accept/reject rules |
 | Finance | Projected revenue/costs, P&L, wage-to-revenue health band |
 | Stadium | Expand capacity, set ticket price, upgrade academy & training |
 
 Progress **autosaves** to `localStorage`.
+
+## Post-build sanity check
+
+After each build, check the slice against these questions:
+
+- Does it create a meaningful chairman decision rather than another continue click?
+- Is the impact clear before the player commits?
+- Does it stay simple enough for fast mobile play?
+- Does it make the game fairer, deeper, or more transparent than Football Chairman Pro 2?
+- Did we avoid adding manager-level micromanagement unless the chairman would realistically approve it?
 
 ## Project structure
 

@@ -94,6 +94,7 @@ const state = {
   decisions: [],
   chairmanProfile: null,
   transferRecommendations: null,
+  outgoingOffers: [],
 };
 
 /* ------------------------------------------------------------------ */
@@ -144,6 +145,7 @@ function newGame(userClubId = 'solihull') {
   state.managerMarket = availableManagersForClub(uc, state.season);
   state.directorMarket = directorMarketForClub(uc, state.season);
   state.decisions = [];
+  state.outgoingOffers = [];
   state.objective = setLeagueObjective(uc, null, clubsInDivision(lg.clubs, uc.division).length);
   state.financeObjective = setFinanceObjective();
   state.inbox = [];
@@ -471,6 +473,7 @@ function save() {
       decisions: state.decisions,
       chairmanProfile: state.chairmanProfile,
       transferRecommendations: state.transferRecommendations,
+      outgoingOffers: state.outgoingOffers,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -518,6 +521,7 @@ function load() {
     state.boardPlan = { ...defaultBoardPlan(), ...(data.boardPlan || {}) };
     state.chairmanProfile = normaliseChairmanProfile(data.chairmanProfile);
     state.transferRecommendations = data.transferRecommendations ?? null;
+    state.outgoingOffers = data.outgoingOffers ?? [];
     state.decisions = dedupeDecisions((data.decisions ?? []).map(enrichDecisionReport));
     syncSeasonCalendar();
     state.currentEvent = nextCalendarIndex();
@@ -705,6 +709,8 @@ function renderDashboard() {
 
 function renderDashboardHub({ club, pos, track, forecast, health, contractRisks, injuries, nextEvent, preview }) {
   const dealCount = dealRoomTargets(club).length;
+  const outgoingCount = (state.outgoingOffers || []).length;
+  const transferActionCount = dealCount + outgoingCount;
   const cupLabel = state.cup?.status === 'complete' ? 'Complete' : cupCurrentRound(state.cup)?.name || 'Scheduled';
   const finance = financeHealthScore(club, forecast, health);
   const manager = managerHealthScore(club);
@@ -720,7 +726,7 @@ function renderDashboardHub({ club, pos, track, forecast, health, contractRisks,
     { tab: 'table', icon: '🏆', label: 'League', value: `${pos}${ord(pos)}`, detail: trackWord(track.state), summary: track.text, band: track.state === 'ontrack' ? 'safe' : track.state === 'close' ? 'warning' : track.state === 'offtrack' ? 'danger' : 'ok' },
     { tab: 'finance', icon: '🏟', label: 'Finance', value: `${finance.score}%`, detail: health.label, summary: financeHubSummary(forecast), band: finance.band },
     { tab: 'manager', icon: '🧢', label: 'Manager', value: `${manager.score}%`, detail: manager.label, summary: managerHubSummary(club, track, pressure), band: manager.band },
-    { tab: 'transfers', icon: '🤝', label: 'Deal Room', value: dealCount ? `${dealCount} proposal${dealCount === 1 ? '' : 's'}` : 'No approval', detail: dealCount ? 'DoF review live' : 'DoF monitoring', summary: dealCount ? 'Review recommended targets before committing money.' : 'The DoF will return when a proper squad need is found.', band: dealCount ? 'warning' : 'ok' },
+    { tab: 'transfers', icon: '🤝', label: 'Deal Room', value: transferActionCount ? `${transferActionCount} live` : 'No approval', detail: outgoingCount ? `${outgoingCount} outgoing offer${outgoingCount === 1 ? '' : 's'}` : dealCount ? 'DoF review live' : 'DoF monitoring', summary: outgoingCount ? 'Review player sale offers before they expire.' : dealCount ? 'Review recommended targets before committing money.' : 'The DoF will return when a proper squad need is found.', band: transferActionCount ? 'warning' : 'ok' },
     { tab: 'club', icon: '💼', label: 'Club', value: `${state.confidence}%`, detail: confidenceLabel(state.confidence).label, summary: `Supporter trust ${state.fanTrust}/100. ${pressure.label}.`, band: scoreBand(state.confidence) },
     { tab: 'cup', icon: '🏅', label: 'Cup', value: cupLabel, detail: state.cup?.status === 'complete' ? 'Finished' : 'In calendar', summary: cupHubSummary(club), band: state.cup?.status === 'complete' ? 'safe' : 'ok' },
     { tab: 'stadium', icon: '🏗', label: 'Stadium', value: `${fmt(club.stadiumCapacity)} seats`, detail: `Academy ${club.academy} · Training ${club.training}`, summary: 'Review facilities, tickets, academy, and training investment.', band: 'ok' },
@@ -2148,7 +2154,7 @@ function renderSquad() {
       <td class="${bandClass(contract.band)} small">${contract.label}</td>
       <td class="${bandClass(view.band)} small">${view.label}</td>
       <td class="num">£${fmt(p.value)}</td>
-      <td><button class="btn-ghost btn-sm" data-sell="${p.id}">Sell</button></td>
+      <td><button class="btn-ghost btn-sm" data-sell="${p.id}">${outgoingOfferForPlayer(p.id) ? 'Offer live' : 'Invite offers'}</button></td>
     </tr>
   `;
   }).join('');
@@ -2187,15 +2193,70 @@ function renderSquad() {
       const p = club.players.find(x => x.id === btn.dataset.sell);
       if (!p) return;
       if (club.players.length <= 11) { alert('You need at least 11 players.'); return; }
-      const view = managerPlayerView(p, club);
-      if (confirm(`Sell ${p.name} for £${fmt(Math.round(p.value * 0.9))}?\n\nManager view: ${view.saleText}.`)) {
-        const fee = sellPlayer(p, club);
-        applyChairmanTrait(view.band === 'safe' ? { prudence: 3, delegation: -3, supporter: -1 } : { prudence: 3, delegation: 1 });
-        alert(`${p.name} sold for £${fmt(fee)}.`);
+      const existing = outgoingOfferForPlayer(p.id);
+      if (existing) {
+        state.currentTab = 'transfers';
         render();
+        return;
       }
+      const offer = createOutgoingOffer(p, club);
+      state.outgoingOffers = [...(state.outgoingOffers || []), offer];
+      applyChairmanTrait({ prudence: 1, delegation: 1 });
+      addStory({
+        title: `${club.short} receive offer for ${p.name}`,
+        body: `${offer.buyerName} have offered £${fmt(offer.fee)}. The offer expires in ${offer.expiresEvent - state.currentEvent} calendar events.`,
+        type: 'transfer',
+        category: 'Transfers',
+        importance: offer.managerBand === 'danger' ? 2 : 1,
+      });
+      state.currentTab = 'transfers';
+      render();
     });
   });
+}
+
+function outgoingOfferForPlayer(playerId) {
+  return (state.outgoingOffers || []).find(offer => offer.playerId === playerId);
+}
+
+function createOutgoingOffer(player, club) {
+  const buyer = state.league.clubs
+    .filter(c => c.id !== club.id && c.division <= club.division + 1)
+    .sort(() => Math.random() - 0.5)[0] || null;
+  const view = managerPlayerView(player, club);
+  const cover = squadSaleCover(player, club);
+  const premium = view.band === 'danger' ? 1.15 : view.band === 'safe' ? 0.96 : 1.05;
+  const fee = Math.round(player.value * premium);
+  return {
+    id: `out-${state.season}-${state.currentEvent}-${player.id}`,
+    playerId: player.id,
+    playerName: player.name,
+    position: player.position,
+    buyerName: buyer?.name || 'Interested club',
+    fee,
+    originalFee: fee,
+    createdEvent: state.currentEvent,
+    expiresEvent: Math.min((state.seasonCalendar?.length || 46) + 1, state.currentEvent + 3),
+    holdCount: 0,
+    negotiationCount: 0,
+    replacementSearch: false,
+    managerBand: view.band,
+    managerText: view.saleText,
+    coverText: cover.text,
+    coverBand: cover.band,
+  };
+}
+
+function squadSaleCover(player, club) {
+  const samePosition = club.players.filter(p => p.id !== player.id && p.position === player.position && p.available !== false);
+  const minimum = { GK: 1, DEF: 3, MID: 3, FWD: 1 }[player.position] || 1;
+  if (samePosition.length < minimum) {
+    return { band: 'danger', text: `Selling leaves only ${samePosition.length} available ${player.position}. Replacement needed.` };
+  }
+  if (samePosition.length === minimum) {
+    return { band: 'warning', text: `${player.position} cover becomes thin. Replacement search recommended.` };
+  }
+  return { band: 'safe', text: `${player.position} cover remains acceptable after sale.` };
 }
 
 function renderSquadDevelopmentReport() {
@@ -2587,6 +2648,7 @@ function renderTransfers() {
   }).join('');
 
   document.getElementById('transfers').innerHTML = `
+    ${renderOutgoingOffers(club)}
     ${renderDealRoom(club)}
     <div class="card">
       <div class="flex-between">
@@ -2621,6 +2683,21 @@ function renderTransfers() {
   document.querySelectorAll('[data-buy]').forEach(btn => {
     btn.addEventListener('click', () => openBid(btn.dataset.buy));
   });
+  document.querySelectorAll('[data-offer-accept]').forEach(btn => {
+    btn.addEventListener('click', () => acceptOutgoingOffer(btn.dataset.offerAccept));
+  });
+  document.querySelectorAll('[data-offer-reject]').forEach(btn => {
+    btn.addEventListener('click', () => rejectOutgoingOffer(btn.dataset.offerReject));
+  });
+  document.querySelectorAll('[data-offer-hold]').forEach(btn => {
+    btn.addEventListener('click', () => holdOutgoingOffer(btn.dataset.offerHold));
+  });
+  document.querySelectorAll('[data-offer-negotiate]').forEach(btn => {
+    btn.addEventListener('click', () => negotiateOutgoingOffer(btn.dataset.offerNegotiate));
+  });
+  document.querySelectorAll('[data-offer-replace]').forEach(btn => {
+    btn.addEventListener('click', () => scoutReplacementForOffer(btn.dataset.offerReplace));
+  });
   document.querySelectorAll('[data-deal-approve]').forEach(btn => {
     btn.addEventListener('click', () => approveDealRoomTarget(btn.dataset.dealApprove));
   });
@@ -2646,6 +2723,176 @@ function renderTransfers() {
     refreshDealRoomRecommendations(club, 'scout-refresh');
     addStory(transferMarketStory(state.market, club));
     render();
+  });
+}
+
+function renderOutgoingOffers(club) {
+  const offers = (state.outgoingOffers || [])
+    .map(offer => ({ offer, player: club.players.find(p => p.id === offer.playerId) }))
+    .filter(item => item.player);
+  if (!offers.length) return `<div class="card">
+    <div class="flex-between">
+      <h2 class="mb0">Outgoing Offers</h2>
+      <span class="muted small">No live bids</span>
+    </div>
+    <p class="muted small mt">Player sales appear here first, so you can delay, negotiate, or ask the DoF to find cover before accepting.</p>
+  </div>`;
+  return `<div class="card">
+    <div class="flex-between">
+      <h2 class="mb0">Outgoing Offers</h2>
+      <span class="warning small">${offers.length} live</span>
+    </div>
+    <div class="grid mt">
+      ${offers.map(({ offer, player }) => renderOutgoingOfferCard(offer, player)).join('')}
+    </div>
+  </div>`;
+}
+
+function renderOutgoingOfferCard(offer, player) {
+  const expiresIn = Math.max(0, (offer.expiresEvent ?? state.currentEvent) - state.currentEvent);
+  return `<div class="mini-panel">
+    <span class="story-kicker">${offer.buyerName}</span>
+    <span class="muted small">${player.position} · ${player.age} yrs · ${player.overall} OVR</span>
+    <strong>${player.name}</strong>
+    <span class="success small">Offer £${fmt(offer.fee)}</span>
+    <span class="${bandClass(offer.managerBand)} small">Manager: ${offer.managerText}</span>
+    <span class="${bandClass(offer.coverBand)} small">${offer.coverText}</span>
+    <span class="muted small">Expires in ${expiresIn} event${expiresIn === 1 ? '' : 's'}${offer.replacementSearch ? ' · replacement search active' : ''}</span>
+    <div class="flex mt action-row">
+      <button class="btn btn-sm" data-offer-accept="${offer.id}">Accept</button>
+      <button class="btn-ghost btn-sm" data-offer-replace="${offer.id}">Find replacement</button>
+      <button class="btn-ghost btn-sm" data-offer-hold="${offer.id}">Hold</button>
+      <button class="btn-ghost btn-sm" data-offer-negotiate="${offer.id}">Negotiate</button>
+      <button class="btn-ghost btn-sm danger-action" data-offer-reject="${offer.id}">Reject</button>
+    </div>
+  </div>`;
+}
+
+function acceptOutgoingOffer(id) {
+  const club = userClub();
+  const offer = (state.outgoingOffers || []).find(o => o.id === id);
+  const player = offer ? club.players.find(p => p.id === offer.playerId) : null;
+  if (!offer || !player) return;
+  if (club.players.length <= 11) { alert('You need at least 11 players.'); return; }
+  const fee = sellPlayer(player, club);
+  const finalFee = Math.max(fee, offer.fee);
+  club.cash += finalFee - fee;
+  state.outgoingOffers = state.outgoingOffers.filter(o => o.id !== id);
+  state.market = guidedMarket(club);
+  applyChairmanTrait(offer.managerBand === 'danger' ? { prudence: 4, delegation: -3, supporter: -1 } : { prudence: 3, delegation: 1 });
+  addStory({
+    title: `${club.short} sell ${player.name}`,
+    body: `${offer.buyerName} completed the deal for £${fmt(finalFee)}. ${offer.coverText}`,
+    type: 'transfer',
+    category: 'Transfers',
+    importance: offer.coverBand === 'danger' ? 2 : 1,
+  });
+  alert(`${player.name} sold to ${offer.buyerName} for £${fmt(finalFee)}.`);
+  render();
+}
+
+function rejectOutgoingOffer(id) {
+  const offer = (state.outgoingOffers || []).find(o => o.id === id);
+  if (!offer) return;
+  state.outgoingOffers = state.outgoingOffers.filter(o => o.id !== id);
+  applyChairmanTrait({ patience: 1, prudence: -1 });
+  addStory({
+    title: `${userClub().short} reject ${offer.playerName} offer`,
+    body: `${offer.buyerName}'s £${fmt(offer.fee)} offer was rejected by the chairman.`,
+    type: 'transfer',
+    category: 'Transfers',
+    importance: 1,
+  });
+  render();
+}
+
+function holdOutgoingOffer(id) {
+  const offer = (state.outgoingOffers || []).find(o => o.id === id);
+  if (!offer) return;
+  if ((offer.holdCount || 0) >= 2) {
+    alert('The buying club will not wait any longer.');
+    return;
+  }
+  offer.holdCount = (offer.holdCount || 0) + 1;
+  offer.expiresEvent = Math.min((state.seasonCalendar?.length || 46) + 1, (offer.expiresEvent || state.currentEvent) + 1);
+  offer.fee = Math.round(offer.fee * 0.97);
+  applyChairmanTrait({ patience: 2, prudence: 1 });
+  addStory({
+    title: `${userClub().short} delay ${offer.playerName} sale`,
+    body: `${offer.buyerName} will wait, but the offer has softened to £${fmt(offer.fee)}.`,
+    type: 'transfer',
+    category: 'Transfers',
+    importance: 1,
+  });
+  render();
+}
+
+function negotiateOutgoingOffer(id) {
+  const offer = (state.outgoingOffers || []).find(o => o.id === id);
+  if (!offer) return;
+  if ((offer.negotiationCount || 0) >= 1) {
+    state.outgoingOffers = state.outgoingOffers.filter(o => o.id !== id);
+    addStory({
+      title: `${offer.buyerName} walk away`,
+      body: `The second counter-offer for ${offer.playerName} was rejected and the bid was withdrawn.`,
+      type: 'transfer',
+      category: 'Transfers',
+      importance: 1,
+    });
+    alert(`${offer.buyerName} walked away from the deal.`);
+    render();
+    return;
+  }
+  offer.negotiationCount = 1;
+  offer.fee = Math.round(offer.fee * 1.08);
+  offer.expiresEvent = Math.max(state.currentEvent + 1, Math.min(offer.expiresEvent || state.currentEvent + 1, state.currentEvent + 2));
+  applyChairmanTrait({ ambition: 1, prudence: 2 });
+  addStory({
+    title: `${userClub().short} negotiate ${offer.playerName} fee`,
+    body: `${offer.buyerName} improved the bid to £${fmt(offer.fee)}, but patience on the deal is shorter.`,
+    type: 'transfer',
+    category: 'Transfers',
+    importance: 1,
+  });
+  render();
+}
+
+function scoutReplacementForOffer(id) {
+  const club = userClub();
+  const offer = (state.outgoingOffers || []).find(o => o.id === id);
+  if (!offer) return;
+  offer.replacementSearch = true;
+  state.transferFilters = { ...(state.transferFilters || {}), position: offer.position, affordableOnly: true };
+  const positionTargets = generateMarket(club, 16).filter(p => p.position === offer.position);
+  state.market = [
+    ...positionTargets,
+    ...guidedMarket(club, 10),
+  ].slice(0, 16);
+  refreshDealRoomRecommendations(club, 'replacement-search');
+  applyChairmanTrait({ prudence: 2, delegation: 3 });
+  addStory({
+    title: `${club.short} seek ${offer.position} cover`,
+    body: `The DoF was asked to find a replacement before deciding on ${offer.playerName}'s offer.`,
+    type: 'transfer',
+    category: 'Transfers',
+    importance: 1,
+  });
+  render();
+}
+
+function processOutgoingOffers() {
+  const offers = state.outgoingOffers || [];
+  const expired = offers.filter(offer => (offer.expiresEvent ?? 0) <= state.currentEvent);
+  if (!expired.length) return;
+  state.outgoingOffers = offers.filter(offer => !expired.includes(offer));
+  expired.forEach(offer => {
+    addStory({
+      title: `${offer.buyerName} withdraw ${offer.playerName} bid`,
+      body: `The £${fmt(offer.fee)} offer expired after the chairman waited too long.`,
+      type: 'transfer',
+      category: 'Transfers',
+      importance: 1,
+    });
   });
 }
 
@@ -3193,6 +3440,7 @@ function onPlayNext() {
   else playLeagueEvent(event);
   syncSeasonCalendar();
   state.currentEvent = nextCalendarIndex();
+  processOutgoingOffers();
   render();
 }
 
@@ -3276,6 +3524,7 @@ function onPlayCupRound() {
     playCupEvent(event);
     syncSeasonCalendar();
     state.currentEvent = nextCalendarIndex();
+    processOutgoingOffers();
     render();
   }
 }
@@ -3520,6 +3769,7 @@ function onNewSeason() {
   state.season++;
   state.market = guidedMarket(uc);
   state.transferRecommendations = null;
+  state.outgoingOffers = [];
   state.managerMarket = availableManagersForClub(uc, state.season);
   state.directorMarket = directorMarketForClub(uc, state.season);
   state.lastResults = [];
