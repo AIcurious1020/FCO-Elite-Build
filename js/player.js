@@ -7,7 +7,7 @@ export class Player {
     id, name, position, age,
     attack, defense, passing, finish,
     wage, value, form = 1.0, morale = 1.0, potential = null,
-    injuryWeeks = 0, injury = null
+    injuryWeeks = 0, injury = null, contractYears = 2
   }) {
     this.id = id;
     this.name = name;
@@ -24,6 +24,7 @@ export class Player {
     this.potential = potential ?? Math.min(99, Player.overallOf({ attack, defense, passing, finish, position }) + 6);
     this.injuryWeeks = injuryWeeks;
     this.injury = injury;
+    this.contractYears = contractYears;
     this.appearances = 0;
     this.goals = 0;
   }

@@ -52,6 +52,9 @@ import {
   RECRUITMENT_POLICIES, BUDGET_PRIORITIES, recruitmentScore,
   policyRecommendation, pressureSnapshot, budgetGuidance, createStaffReports,
 } from './staff.js';
+import {
+  contractDemand, contractStatus, renewPlayerContract, tickContracts,
+} from './contracts.js';
 
 // v3 save schema (multi-division + board objectives). Older saves are
 // incompatible, so they are simply ignored and a fresh pyramid game starts.
@@ -975,7 +978,7 @@ function renderDecisionInbox(compact = false) {
           </div>
           <div class="decision-actions">
             <button class="btn btn-sm" data-decision-approve="${decision.id}">${decision.actionLabel || 'Approve'}</button>
-            <button class="btn-ghost btn-sm" data-decision-dismiss="${decision.id}">Dismiss</button>
+            <button class="btn-ghost btn-sm" data-decision-dismiss="${decision.id}">${decision.dismissLabel || 'Dismiss'}</button>
           </div>
         </article>
       `).join('')}
@@ -1393,6 +1396,18 @@ function approveDecision(id) {
   if (decision.type === 'pressure_response') {
     state.confidence = Math.min(100, state.confidence + 3);
   }
+  if (decision.type === 'renew_contract') {
+    const player = club.players.find(p => p.id === decision.payload.playerId);
+    if (!player) return;
+    const demand = contractDemand(player, club);
+    if (club.cash < demand.signingFee) {
+      alert(`You need £${fmt(demand.signingFee)} for the signing fee.`);
+      return;
+    }
+    club.cash -= demand.signingFee;
+    renewPlayerContract(player, demand);
+    decision.impact = `${player.name} signs for ${demand.years} years at £${fmt(demand.newWage)}/wk. Signing fee: £${fmt(demand.signingFee)}.`;
+  }
 
   addStory(staffDecisionStory(club, decision));
   state.decisions = state.decisions.filter(d => d.id !== id);
@@ -1451,7 +1466,9 @@ function renderSquad() {
     posOrder(a.position) - posOrder(b.position) || b.overall - a.overall);
   const xi = new Set(club.bestEleven().map(p => p.id));
 
-  const rows = players.map(p => `
+  const rows = players.map(p => {
+    const contract = contractStatus(p);
+    return `
     <tr class="${xi.has(p.id) ? 'highlight-row' : ''} ${p.available === false ? 'unavailable-row' : ''}">
       <td>${p.name} ${xi.has(p.id) ? '<span class="small success">●</span>' : ''}</td>
       <td><span class="pill ${p.position.toLowerCase()}">${p.position}</span></td>
@@ -1464,10 +1481,12 @@ function renderSquad() {
       <td class="num small">${p.form.toFixed(2)}</td>
       <td class="${p.available === false ? 'danger' : 'success'} small">${p.available === false ? `${p.injury} · ${p.injuryWeeks}w` : 'Available'}</td>
       <td class="num">£${fmt(p.wage)}</td>
+      <td class="${bandClass(contract.band)} small">${contract.label}</td>
       <td class="num">£${fmt(p.value)}</td>
       <td><button class="btn-ghost btn-sm" data-sell="${p.id}">Sell</button></td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 
   document.getElementById('squad').innerHTML = `
     ${renderSquadDevelopmentReport()}
@@ -1491,7 +1510,7 @@ function renderSquad() {
         <thead><tr>
           <th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th>
           <th class="num">Att</th><th class="num">Def</th><th class="num">Pas</th><th class="num">Fin</th>
-          <th class="num">Form</th><th>Status</th><th class="num">Wage</th><th class="num">Value</th><th></th>
+          <th class="num">Form</th><th>Status</th><th class="num">Wage</th><th>Contract</th><th class="num">Value</th><th></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -2464,6 +2483,7 @@ function onNewSeason() {
   clubs.forEach(c => {
     c.resetSeasonRecord();
     const changes = developSquad(c, state.season);
+    tickContracts(c);
     c.players.forEach(p => { p.appearances = 0; p.goals = 0; });
     if (c === uc) {
       userDevelopment = changes;
@@ -2628,6 +2648,7 @@ function storyCategory(type) {
     history: 'Club',
     league: 'League',
     cup: 'Cup',
+    contract: 'Contracts',
     'cup-good': 'Cup',
     'cup-bad': 'Cup',
     injury: 'Squad',

@@ -71,6 +71,7 @@ export function generateAcademyIntake(club, season = 1) {
       wage: academyWage(base),
       form: 1,
       morale: 1.05,
+      contractYears: 3,
     });
     prospect.potential = Math.min(95, Math.max(prospect.overall + 4, Math.round(prospect.overall + potentialBoost)));
     prospect.refreshValue();

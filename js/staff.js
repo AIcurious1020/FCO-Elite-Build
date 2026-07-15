@@ -162,6 +162,27 @@ export function createStaffReports({ club, market = [], forecast, pressure, trac
   const policy = boardPlan?.recruitmentPolicy || 'balanced';
   const bestTarget = market[0] || null;
   const cashTight = forecast?.risk === 'danger' || forecast?.risk === 'warning' || forecast?.remainingWeeklyWage < 0;
+  const expiring = club.players
+    .filter(p => (p.contractYears ?? 2) <= 1)
+    .sort((a, b) => (a.contractYears ?? 0) - (b.contractYears ?? 0) || b.overall - a.overall)
+    .slice(0, 3);
+
+  expiring.forEach(player => {
+    const urgent = (player.contractYears ?? 0) <= 0;
+    const title = urgent ? `${player.name} contract expires now` : `${player.name} enters final year`;
+    reports.push({
+      id: `S${season}-W${week}-contract-${player.id}-${player.contractYears ?? 0}`,
+      type: 'renew_contract',
+      source: 'Club Secretary',
+      title,
+      body: `${player.position} ${player.name} is ${player.overall} OVR and worth around £${fmt(player.value)}. Decide whether to renew or sell before leverage slips.`,
+      actionLabel: 'Renew contract',
+      dismissLabel: 'Defer talks',
+      impact: 'Approves a transparent wage rise and extends the player contract.',
+      importance: urgent ? 3 : 2,
+      payload: { playerId: player.id },
+    });
+  });
 
   if (bestTarget) {
     reports.push({
@@ -235,6 +256,10 @@ export function createStaffReports({ club, market = [], forecast, pressure, trac
   }
 
   return reports;
+}
+
+function fmt(n) {
+  return Math.round(n).toLocaleString('en-GB');
 }
 
 function clamp(n, min, max) {

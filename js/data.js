@@ -50,6 +50,7 @@ function makePlayer(rand, tier) {
   return new Player({
     id: 'pl' + (++pid), name, position: pos, age,
     attack, defense, passing, finish, wage, form, morale,
+    contractYears: 1 + Math.floor(rand() * 4),
   });
 }
 

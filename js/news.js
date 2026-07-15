@@ -312,8 +312,8 @@ export function staffDecisionStory(club, decision) {
   return {
     title: `${club.short} approve: ${decision.title}`,
     body: decision.impact || decision.body,
-    type: decision.type === 'tighten_spending' ? 'finance' : decision.type === 'pressure_response' ? 'board' : 'staff',
-    category: 'Decision',
+    type: decision.type === 'tighten_spending' ? 'finance' : decision.type === 'pressure_response' ? 'board' : decision.type === 'renew_contract' ? 'contract' : 'staff',
+    category: decision.type === 'renew_contract' ? 'Contracts' : 'Decision',
     importance: decision.importance || 1,
   };
 }

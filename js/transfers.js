@@ -34,6 +34,7 @@ export function generateMarket(userClub, size = 8) {
       id: 'tf' + (++fid), name, position: pos, age,
       attack, defense, passing, finish,
       wage: 0,
+      contractYears: 3,
     });
     p.wage = Math.round((Math.pow(p.overall / 10, 2.6) * 15) / 25) * 25;
     p.refreshValue();
