@@ -684,10 +684,6 @@ function renderDashboard() {
   const obj = state.objective;
   const track = trackStatus(obj, pos, club.played);
   const pressure = currentPressure(club, pos, track);
-  const finance = financeHealthScore(club, forecast, health);
-  const manager = managerHealthScore(club);
-  const squad = squadHealthScore(club, injuries, contractRisks);
-
   const nextFixture = nextEvent ? fixtureForCalendarEvent(nextEvent) : null;
   const preview = nextFixture ? matchPreview(nextFixture, nextEvent) : null;
 
@@ -705,16 +701,7 @@ function renderDashboard() {
 
     ${renderChairmanBrief({ club, pos, track, pressure, nextEvent, preview })}
 
-    <div class="health-strip">
-      ${renderHealthTile({ icon: '🏆', label: 'League', value: `${pos}${ord(pos)}`, sub: trackWord(track.state), band: track.state === 'ontrack' ? 'safe' : track.state === 'close' ? 'warning' : track.state === 'offtrack' ? 'danger' : 'ok', tab: 'table' })}
-      ${renderHealthTile({ icon: '🏟', label: 'Finance', value: `${finance.score}%`, sub: health.label, band: finance.band, tab: 'finance' })}
-      ${renderHealthTile({ icon: '💼', label: 'Board', value: `${state.confidence}%`, sub: confidenceLabel(state.confidence).label, band: scoreBand(state.confidence), tab: 'club' })}
-      ${renderHealthTile({ icon: '🧢', label: 'Manager', value: `${manager.score}%`, sub: manager.label, band: manager.band, tab: 'manager' })}
-      ${renderHealthTile({ icon: '👕', label: 'Squad', value: `${squad.score}%`, sub: squad.label, band: squad.band, tab: 'squad' })}
-      ${renderHealthTile({ icon: '📋', label: 'Decisions', value: `${state.decisions.length}`, sub: state.decisions.length ? 'Pending' : 'Clear', band: state.decisions.length ? 'danger' : 'safe', tab: 'boardroom' })}
-    </div>
-
-    ${renderDashboardHub({ club, pos, forecast, contractRisks, injuries, nextEvent })}
+    ${renderDashboardHub({ club, pos, track, forecast, health, contractRisks, injuries, nextEvent })}
 
     ${renderDashboardAlerts({ pressure, contractRisks, injuries, track })}
 
@@ -773,19 +760,22 @@ function renderDashboard() {
   bindDecisionButtons();
 }
 
-function renderDashboardHub({ club, pos, forecast, contractRisks, injuries, nextEvent }) {
+function renderDashboardHub({ club, pos, track, forecast, health, contractRisks, injuries, nextEvent }) {
   const dealCount = dealRoomTargets(club).length;
   const cupLabel = state.cup?.status === 'complete' ? 'Complete' : cupCurrentRound(state.cup)?.name || 'Scheduled';
+  const finance = financeHealthScore(club, forecast, health);
+  const manager = managerHealthScore(club);
+  const squad = squadHealthScore(club, injuries, contractRisks);
   const areas = [
-    { tab: 'boardroom', icon: '📋', label: 'Boardroom', value: state.decisions.length ? `${state.decisions.length} pending` : 'Clear', band: state.decisions.length ? 'danger' : 'safe' },
-    { tab: 'squad', icon: '👕', label: 'Squad', value: injuries.length ? `${injuries.length} unavailable` : contractRisks.length ? `${contractRisks.length} contracts` : 'Available', band: injuries.length || contractRisks.length ? 'warning' : 'safe' },
+    { tab: 'boardroom', icon: '📋', label: 'Boardroom', value: state.decisions.length ? `${state.decisions.length} pending` : 'Clear', detail: 'Decisions', band: state.decisions.length ? 'danger' : 'safe' },
+    { tab: 'table', icon: '🏆', label: 'League', value: `${pos}${ord(pos)}`, detail: trackWord(track.state), band: track.state === 'ontrack' ? 'safe' : track.state === 'close' ? 'warning' : track.state === 'offtrack' ? 'danger' : 'ok' },
+    { tab: 'finance', icon: '🏟', label: 'Finance', value: `${finance.score}%`, detail: health.label, band: finance.band },
+    { tab: 'manager', icon: '🧢', label: 'Manager', value: `${manager.score}%`, detail: manager.label, band: manager.band },
+    { tab: 'squad', icon: '👕', label: 'Squad', value: `${squad.score}%`, detail: squad.label, band: squad.band },
     { tab: 'transfers', icon: '🤝', label: 'Deal Room', value: dealCount ? `${dealCount} proposal${dealCount === 1 ? '' : 's'}` : 'No approval', band: dealCount ? 'warning' : 'ok' },
     { tab: 'fixtures', icon: '📅', label: 'Fixtures', value: nextEvent?.date || 'Season complete', band: nextEvent ? 'ok' : 'safe' },
-    { tab: 'table', icon: '🏆', label: 'Table', value: `${pos}${ord(pos)} place`, band: 'ok' },
-    { tab: 'finance', icon: '🏟', label: 'Finance', value: forecast.risk === 'safe' ? 'Stable' : forecast.risk, band: forecast.risk === 'danger' ? 'danger' : forecast.risk === 'warning' ? 'warning' : 'safe' },
-    { tab: 'manager', icon: '🧢', label: 'Manager', value: club.manager ? `${club.manager.confidence ?? 60}% confidence` : 'Vacant', band: (club.manager?.confidence ?? 60) < 45 ? 'warning' : 'ok' },
     { tab: 'news', icon: '📰', label: 'News', value: `${state.inbox.length} stories`, band: 'ok' },
-    { tab: 'club', icon: '💼', label: 'Club', value: `${state.confidence}% board`, band: scoreBand(state.confidence) },
+    { tab: 'club', icon: '💼', label: 'Club', value: `${state.confidence}%`, detail: confidenceLabel(state.confidence).label, band: scoreBand(state.confidence) },
     { tab: 'cup', icon: '🏅', label: 'Cup', value: cupLabel, band: state.cup?.status === 'complete' ? 'safe' : 'ok' },
     { tab: 'stadium', icon: '🏗', label: 'Stadium', value: `${fmt(club.stadiumCapacity)} seats`, band: 'ok' },
   ];
@@ -795,6 +785,7 @@ function renderDashboardHub({ club, pos, forecast, contractRisks, injuries, next
       <span>
         <strong>${area.label}</strong>
         <small>${area.value}</small>
+        ${area.detail ? `<em>${area.detail}</em>` : ''}
       </span>
     </button>`).join('')}
   </div>`;
@@ -856,17 +847,6 @@ function briefResultText(memory) {
   const away = clubs[memory.away]?.short || 'Away';
   const score = `${home} ${memory.homeGoals}-${memory.awayGoals} ${away}`;
   return memory.involved && memory.outcome ? `${score} (${memory.outcome})` : `${memory.round || 'Round'}: ${score}`;
-}
-
-function renderHealthTile({ icon, label, value, sub, band, tab }) {
-  return `<button class="health-tile ${bandClass(band)}" data-dashboard-tab="${tab}">
-    <span class="health-icon">${icon}</span>
-    <span class="health-copy">
-      <span class="health-label">${label}</span>
-      <strong>${value}</strong>
-      <small>${sub}</small>
-    </span>
-  </button>`;
 }
 
 function renderDashboardAlerts({ pressure, contractRisks, injuries, track }) {

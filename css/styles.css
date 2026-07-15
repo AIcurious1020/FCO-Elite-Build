@@ -159,53 +159,6 @@ body {
   min-width: 170px;
 }
 
-.health-strip {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.health-tile {
-  display: grid;
-  grid-template-columns: 32px 1fr;
-  align-items: center;
-  gap: 8px;
-  min-height: 72px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-}
-.health-tile:hover { border-color: rgba(79,138,255,0.55); }
-.health-tile.success { border-color: rgba(53,208,127,0.38); }
-.health-tile.warning { border-color: rgba(255,180,84,0.45); }
-.health-tile.danger { border-color: rgba(255,95,111,0.50); }
-.health-icon {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--panel-2);
-  font-size: 17px;
-}
-.health-copy { display: grid; gap: 1px; min-width: 0; }
-.health-label,
-.health-copy small {
-  color: var(--muted);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.health-copy strong { font-size: 18px; line-height: 1.1; }
-.health-tile.success .health-copy strong { color: var(--accent-2); }
-.health-tile.warning .health-copy strong { color: var(--warning); }
-.health-tile.danger .health-copy strong { color: var(--danger); }
-
 .dashboard-hub {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
@@ -239,7 +192,8 @@ body {
   background: var(--panel-2);
 }
 .hub-card strong,
-.hub-card small {
+.hub-card small,
+.hub-card em {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -250,6 +204,15 @@ body {
   margin-top: 2px;
   font-size: 12px;
 }
+.hub-card em {
+  color: var(--text);
+  font-style: normal;
+  margin-top: 1px;
+  font-size: 12px;
+}
+.hub-card.success em { color: var(--accent-2); }
+.hub-card.warning em { color: var(--warning); }
+.hub-card.danger em { color: var(--danger); }
 
 .alert-strip {
   display: grid;
@@ -728,8 +691,6 @@ select, input {
   .dashboard-hero { align-items: flex-start; }
   .chairman-brief { grid-template-columns: 1fr; }
   .chairman-brief .btn { width: 100%; }
-  .health-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .health-tile { grid-template-columns: 1fr; min-height: 86px; }
   .dashboard-hub { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hub-card { grid-template-columns: 1fr; min-height: 84px; }
   .dashboard-alert { grid-template-columns: 28px 1fr; }
