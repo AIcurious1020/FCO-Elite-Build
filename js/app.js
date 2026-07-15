@@ -93,6 +93,7 @@ const state = {
   boardPlan: defaultBoardPlan(),
   decisions: [],
   chairmanProfile: null,
+  transferRecommendations: null,
 };
 
 /* ------------------------------------------------------------------ */
@@ -122,6 +123,7 @@ function newGame(userClubId = 'solihull') {
   state.chairmanProfile = defaultChairmanProfile();
   ensureClubStaff(lg.clubs, state.season);
   state.market = guidedMarket(uc);
+  state.transferRecommendations = null;
   state.lastResults = [];
   // Board objectives for the opening season.
   state.confidence = START_CONFIDENCE;
@@ -148,6 +150,7 @@ function newGame(userClubId = 'solihull') {
   addStory(objectiveStory(state.objective));
   addStory({ title: 'Finance guardrail agreed', body: state.financeObjective.detail, type: 'finance', category: 'Finance', importance: 1 });
   addStory(transferMarketStory(state.market, uc));
+  refreshDealRoomRecommendations(uc, 'season-start');
   generateDecisionReports('season-start');
 }
 
@@ -468,6 +471,7 @@ function save() {
       boardPlan: state.boardPlan,
       decisions: state.decisions,
       chairmanProfile: state.chairmanProfile,
+      transferRecommendations: state.transferRecommendations,
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
   } catch (e) { /* storage may be blocked; game still runs in-memory */ }
@@ -514,6 +518,7 @@ function load() {
     state.directorMarket = data.directorMarket ?? directorMarketForClub(clubsById[data.userClubId], data.season || 1);
     state.boardPlan = { ...defaultBoardPlan(), ...(data.boardPlan || {}) };
     state.chairmanProfile = normaliseChairmanProfile(data.chairmanProfile);
+    state.transferRecommendations = data.transferRecommendations ?? null;
     state.decisions = dedupeDecisions((data.decisions ?? []).map(enrichDecisionReport));
     syncSeasonCalendar();
     state.currentEvent = nextCalendarIndex();
@@ -2495,13 +2500,16 @@ function renderTransfers() {
   });
   document.getElementById('refreshMarket').addEventListener('click', () => {
     state.market = guidedMarket(club);
+    refreshDealRoomRecommendations(club, 'scout-refresh');
     addStory(transferMarketStory(state.market, club));
     render();
   });
 }
 
 function renderDealRoom(club) {
+  ensureDealRoomReview(club);
   const targets = dealRoomTargets(club);
+  const review = state.transferRecommendations;
   const latest = state.worldActivity
     .slice(0, 3)
     .map(activity => ({
@@ -2513,13 +2521,13 @@ function renderDealRoom(club) {
     <div class="flex-between">
       <div>
         <h2 class="mb0">Deal Room</h2>
-        <p class="muted small">Director of Football recommendations with manager input before you approve spending.</p>
+        <p class="muted small">Director of Football review pack with manager input before you approve spending.</p>
       </div>
-      <span class="muted small">${RECRUITMENT_POLICIES[state.boardPlan.recruitmentPolicy]?.label || 'Balanced'}</span>
+      <span class="muted small">Review MW ${review?.week ?? state.currentWeek} · next ${review?.nextReviewWeek ?? state.currentWeek + 4}</span>
     </div>
     ${targets.length
       ? `<div class="grid mt">${targets.map(target => renderDealRoomTarget(target)).join('')}</div>`
-      : '<p class="muted small mt">No live deal requires chairman approval. The DoF will only bring you players who match a squad gap, manager request, or clear upgrade brief.</p>'}
+      : `<p class="muted small mt">No live deal requires chairman approval. The DoF will only bring you players who match a squad gap, manager request, or clear upgrade brief. Next scheduled recruitment review: MW ${review?.nextReviewWeek ?? state.currentWeek + 4}.</p>`}
     ${latest.length ? `<h3 class="mt">Rival Movement</h3>
       <div class="headline-list mt">
         ${latest.map(activity => `<article>
@@ -2532,6 +2540,58 @@ function renderDealRoom(club) {
 }
 
 function dealRoomTargets(club) {
+  const ids = state.transferRecommendations?.ids || [];
+  if (!ids.length) return [];
+  const briefs = recruitmentBriefs(club);
+  const used = new Set();
+  const reviewedTargets = ids.map(id => state.market.find(player => player.id === id)).filter(Boolean);
+  return briefs.map(brief => {
+    const options = state.market
+      .filter(player => reviewedTargets.includes(player) && !used.has(player.id) && player.position === brief.position)
+      .map(player => {
+        const fit = transferFit(player, club);
+        const policyFit = transferPolicyScore(player, club, fit);
+        const manager = managerTargetView(player, club, fit, brief);
+        return { player, fit, policyFit, manager, brief, briefScore: dealBriefScore(player, fit, policyFit, manager, brief) };
+      })
+      .filter(target => target.briefScore >= 58 && target.manager.label !== 'Not a priority')
+      .sort((a, b) => b.briefScore - a.briefScore || b.policyFit.score - a.policyFit.score);
+    const best = options[0];
+    if (best) used.add(best.player.id);
+    return best || null;
+  }).filter(Boolean).slice(0, 2);
+}
+
+function ensureDealRoomReview(club) {
+  const review = state.transferRecommendations;
+  const due = !review
+    || review.season !== state.season
+    || state.currentWeek >= (review.nextReviewWeek ?? 0);
+  if (due) refreshDealRoomRecommendations(club, review ? 'scheduled-review' : 'first-review');
+}
+
+function refreshDealRoomRecommendations(club, reason = 'manual-review') {
+  const candidates = dealRoomCandidateTargets(club);
+  const ids = candidates.map(target => target.player.id);
+  state.transferRecommendations = {
+    season: state.season,
+    week: state.currentWeek,
+    reason,
+    ids,
+    nextReviewWeek: Math.min((state.fixtures?.length || 46) + 1, state.currentWeek + 4),
+  };
+  return state.transferRecommendations;
+}
+
+function removeTransferRecommendation(id) {
+  if (!state.transferRecommendations?.ids) return;
+  state.transferRecommendations = {
+    ...state.transferRecommendations,
+    ids: state.transferRecommendations.ids.filter(playerId => playerId !== id),
+  };
+}
+
+function dealRoomCandidateTargets(club) {
   const briefs = recruitmentBriefs(club);
   const used = new Set();
   return briefs.map(brief => {
@@ -2656,6 +2716,7 @@ function approveDealRoomTarget(id) {
   if (!fit.affordable) { alert('You cannot afford the asking price.'); return; }
   const wageAfter = projectedWageRatio(club, target);
   completeTransferIn(target, fit.askingPrice, club, state.market);
+  removeTransferRecommendation(id);
   applyChairmanTrait({
     ambition: fit.improvement >= 5 ? 4 : 1,
     prudence: wageAfter > 0.8 ? -3 : 1,
@@ -2674,6 +2735,7 @@ function askForCheaperOption(id) {
   state.boardPlan.recruitmentPolicy = 'bargains';
   state.transferFilters = { ...(state.transferFilters || {}), position: target.position, affordableOnly: true };
   state.market = guidedMarket(club);
+  refreshDealRoomRecommendations(club, 'cheaper-options');
   applyChairmanTrait({ prudence: 4, delegation: 2, ambition: -1 });
   addStory({
     title: `${club.short} ask DoF for cheaper options`,
@@ -2689,6 +2751,7 @@ function deferDealRoomTarget(id) {
   const club = userClub();
   const target = state.market.find(p => p.id === id);
   if (!target) return;
+  removeTransferRecommendation(id);
   applyChairmanTrait({ prudence: 2, patience: 2 });
   addStory({
     title: `${club.short} defer ${target.name} decision`,
@@ -2706,6 +2769,7 @@ function rejectDealRoomTarget(id) {
   const target = state.market.find(p => p.id === id);
   if (!target) return;
   state.market = state.market.filter(p => p.id !== id);
+  removeTransferRecommendation(id);
   applyChairmanTrait({ prudence: 2, delegation: -1 });
   addStory({
     title: `${club.short} reject ${target.name} proposal`,
@@ -3313,6 +3377,7 @@ function onNewSeason() {
   state.currentWeek = 0;
   state.season++;
   state.market = guidedMarket(uc);
+  state.transferRecommendations = null;
   state.managerMarket = availableManagersForClub(uc, state.season);
   state.directorMarket = directorMarketForClub(uc, state.season);
   state.lastResults = [];
@@ -3336,6 +3401,7 @@ function onNewSeason() {
   addStory(objectiveStory(state.objective));
   addStory({ title: 'Finance forecast refreshed', body: state.financeObjective.detail, type: 'finance', category: 'Finance', importance: 1 });
   addStory(transferMarketStory(state.market, uc));
+  refreshDealRoomRecommendations(uc, 'new-season');
   generateDecisionReports('new-season');
 
   // 7. Build a clear end-of-season summary.
