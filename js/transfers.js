@@ -97,23 +97,30 @@ export function transferFit(player, club) {
   const askingPrice = Math.round(player.value * 0.95);
   const affordable = askingPrice <= club.cash;
   const wageRatioAfter = projectedWageRatio(club, player);
-  let recommendation = role.label;
-
-  if (!affordable) recommendation = 'Too expensive';
-  else if (need?.roleNeed === 'depth' && role.type !== 'poor') recommendation = 'Fills squad depth';
-  else if (need?.roleNeed === 'rotation' && (role.type === 'starter' || role.type === 'rotation')) recommendation = 'Improves rotation';
-  else if (need?.roleNeed === 'starter' && role.type === 'starter') recommendation = 'Starter upgrade';
+  const clubFit = clubFitLabel(role, need, affordable);
+  const recommendation = clubFit.reason;
 
   return {
     need,
     currentBest,
     role,
+    clubFit,
     improvement,
     askingPrice,
     affordable,
     wageRatioAfter,
     recommendation,
   };
+}
+
+function clubFitLabel(role, need, affordable) {
+  if (!affordable) return { label: 'Risky', band: 'danger', reason: 'Fee is beyond current budget.' };
+  if (role.type === 'poor') return { label: 'Poor fit', band: 'danger', reason: 'Does not clearly improve the squad.' };
+  if (role.type === 'starter') return { label: 'Excellent fit', band: 'safe', reason: 'Improves the first XI.' };
+  if (role.type === 'rotation') return { label: 'Good fit', band: 'safe', reason: 'Strengthens matchday options.' };
+  if (role.type === 'prospect') return { label: 'Good fit', band: 'ok', reason: 'Young player with development upside.' };
+  if (need?.roleNeed === 'depth') return { label: 'Useful cover', band: 'warning', reason: 'Adds needed squad depth.' };
+  return { label: 'Useful cover', band: 'warning', reason: 'Adds cover, but not a clear upgrade.' };
 }
 
 const desired = { GK: 2, DEF: 5, MID: 5, FWD: 3 };
@@ -182,11 +189,11 @@ function playerSquadRole(player, profile) {
   const best = profile?.bestOverall || 0;
   const rotation = profile?.rotationOverall || best;
   const depth = profile?.depthOverall || rotation || best;
-  if (player.overall >= best + 2) return { type: 'starter', label: 'Starter upgrade', benchmark: best };
-  if (player.overall >= rotation + 2) return { type: 'rotation', label: 'Rotation upgrade', benchmark: rotation };
-  if (ageUpside && player.overall >= depth - 2) return { type: 'prospect', label: 'Prospect pathway', benchmark: depth };
-  if (player.overall >= depth) return { type: 'depth', label: 'Depth cover', benchmark: depth };
-  return { type: 'poor', label: 'Below squad level', benchmark: depth };
+  if (player.overall >= best + 2) return { type: 'starter', label: 'Improves first XI', benchmark: best };
+  if (player.overall >= rotation + 2) return { type: 'rotation', label: 'Strengthens squad', benchmark: rotation };
+  if (ageUpside && player.overall >= depth - 2) return { type: 'prospect', label: 'Future option', benchmark: depth };
+  if (player.overall >= depth) return { type: 'depth', label: 'Useful cover', benchmark: depth };
+  return { type: 'poor', label: 'Poor fit', benchmark: depth };
 }
 
 export function projectedWageRatio(club, incoming = null) {

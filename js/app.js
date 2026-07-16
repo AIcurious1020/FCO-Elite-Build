@@ -2631,21 +2631,18 @@ function renderTransfers() {
     const fit = transferFit(p, club);
     const policyFit = transferPolicyScore(p, club, fit);
     const rec = policyRecommendation(policyFit.score);
-    const roleClass = fit.role?.type === 'starter' || fit.role?.type === 'rotation' ? 'success'
-      : fit.role?.type === 'poor' ? 'danger'
-        : 'warning';
-    const fitClass = fit.affordable ? roleClass : 'danger';
+    const fitClass = bandClass(fit.clubFit?.band || 'warning');
     return `
     <tr>
       <td>${p.name}</td>
       <td><span class="pill ${p.position.toLowerCase()}">${p.position}</span></td>
       <td class="num">${p.age}</td>
       <td class="num"><strong>${p.overall}</strong></td>
-      <td class="num ${fit.improvement >= 0 ? 'success' : 'muted'}">${signed(fit.improvement)}</td>
+      <td><span class="${fitClass} small">${fit.clubFit?.label || 'Club fit'}</span></td>
       <td class="num">£${fmt(p.wage)}/wk</td>
       <td class="num">£${fmt(fit.askingPrice)}</td>
-      <td><span class="${fitClass} small">${fit.recommendation}</span></td>
-      <td><span class="${bandClass(rec.band)} small">${rec.label} · ${policyFit.score}</span><br><span class="muted small">${fit.role?.label || 'Squad fit'}</span></td>
+      <td><span class="muted small">${fit.clubFit?.reason || fit.recommendation}</span></td>
+      <td><span class="${bandClass(rec.band)} small">${rec.label}</span></td>
       <td><button class="btn btn-sm" data-buy="${p.id}">Bid</button></td>
     </tr>`;
   }).join('');
@@ -2678,7 +2675,7 @@ function renderTransfers() {
         <button class="btn-ghost" id="refreshMarket">Scout new targets</button>
       </div>
       <table>
-        <thead><tr><th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th><th class="num">Vs Role</th><th class="num">Wage</th><th class="num">Ask</th><th>Squad Fit</th><th>DoF View</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th><th>Club Fit</th><th class="num">Wage</th><th class="num">Fee</th><th>Reason</th><th>DoF View</th><th></th></tr></thead>
         <tbody>${rows || '<tr><td colspan="10" class="muted">No targets match these filters.</td></tr>'}</tbody>
       </table>
     </div>`;
@@ -3005,19 +3002,19 @@ function dealRoomCandidateTargets(club) {
 }
 
 function renderDealRoomTarget(target) {
-  const { player, fit, policyFit, manager, brief, briefScore } = target;
+  const { player, fit, policyFit, manager, brief } = target;
   const rec = policyRecommendation(policyFit.score);
   const affordableClass = fit.affordable ? 'success' : 'danger';
+  const fitClass = bandClass(fit.clubFit?.band || 'warning');
   return `<div class="mini-panel">
     <span class="story-kicker">${brief.source}</span>
     <span class="muted small">${player.position} · ${player.age} yrs · ${player.overall} OVR</span>
     <strong>${player.name}</strong>
     <span class="small">${brief.label}</span>
-    <span class="muted small">Role: ${fit.role?.label || 'Squad fit'} · ${fit.need?.label || 'Covered'}</span>
-    <span class="${bandClass(rec.band)} small">DoF: ${rec.label} · ${policyFit.score}/100</span>
+    <span class="${fitClass} small">Club fit: ${fit.clubFit?.label || 'Useful cover'} - ${fit.clubFit?.reason || fit.recommendation}</span>
+    <span class="${bandClass(rec.band)} small">DoF: ${rec.label}</span>
     <span class="${bandClass(manager.band)} small">Manager: ${manager.label}</span>
     <span class="muted small">${manager.text}</span>
-    <span class="muted small">Brief fit ${briefScore}/100</span>
     <span class="${affordableClass} small">Ask £${fmt(fit.askingPrice)} · wage £${fmt(player.wage)}/wk</span>
     <div class="flex mt action-row">
       <button class="btn btn-sm" data-deal-approve="${player.id}" ${fit.affordable ? '' : 'disabled'}>Approve bid</button>
@@ -3101,16 +3098,16 @@ function managerTargetView(player, club, fit = transferFit(player, club), brief 
     return { band: 'warning', label: 'Blocks academy pathway', text: 'The manager worries this signing slows a young player route.' };
   }
   if (fit.role?.type === 'starter') {
-    return { band: 'safe', label: 'Starter upgrade', text: 'The manager sees him improving the first XI.' };
+    return { band: 'safe', label: 'Improves first XI', text: 'The manager sees him improving the starting side.' };
   }
   if (fit.role?.type === 'rotation') {
-    return { band: 'safe', label: 'Rotation upgrade', text: 'The manager sees stronger matchday options and better cover.' };
+    return { band: 'safe', label: 'Strengthens squad', text: 'The manager sees stronger matchday options and better cover.' };
   }
   if (fit.role?.type === 'prospect') {
-    return { band: 'warning', label: 'Development option', text: 'The manager likes the upside, but he is not an immediate fix.' };
+    return { band: 'warning', label: 'Future option', text: 'The manager likes the upside, but he is not an immediate fix.' };
   }
   if (fit.role?.type === 'depth' || !best) {
-    return { band: 'warning', label: 'Useful squad depth', text: 'The manager would use him as cover rather than a regular starter.' };
+    return { band: 'warning', label: 'Useful cover', text: 'The manager would use him as cover rather than a regular starter.' };
   }
   return { band: 'danger', label: 'Not a priority', text: 'The manager thinks funds may be better used elsewhere.' };
 }
