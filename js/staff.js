@@ -105,20 +105,40 @@ export function defaultBoardPlan() {
 
 export function recruitmentScore(player, club, fit, policy = 'balanced') {
   const affordable = fit.affordable ? 12 : -24;
-  const need = fit.need?.priority === 'urgent' ? 18 : fit.need?.priority === 'upgrade' ? 9 : 0;
-  const improvement = Math.max(-8, Math.min(20, fit.improvement)) * 1.4;
+  const need = {
+    starter: 20,
+    depth: 15,
+    rotation: 12,
+    future: 7,
+    covered: 0,
+  }[fit.need?.roleNeed] ?? (fit.need?.priority === 'urgent' ? 18 : fit.need?.priority === 'upgrade' ? 9 : 0);
+  const roleFit = {
+    starter: 18,
+    rotation: 13,
+    prospect: 9,
+    depth: 7,
+    poor: -18,
+  }[fit.role?.type] || 0;
+  const roleMismatch = roleMeetsNeed(fit.role?.type, fit.need?.roleNeed) ? 0 : -16;
+  const improvement = Math.max(-8, Math.min(16, fit.improvement)) * 1.1;
   const wageRatioPenalty = fit.wageRatioAfter > 0.8 ? (fit.wageRatioAfter - 0.8) * 45 : 0;
   const value = player.value ? (player.overall * 1000) / player.value : 0;
-  let score = 50 + affordable + need + improvement + value * 4 - wageRatioPenalty;
+  let score = 44 + affordable + need + roleFit + roleMismatch + improvement + value * 4 - wageRatioPenalty;
 
   if (policy === 'prospects') score += player.age <= 23 ? 18 : player.age >= 30 ? -12 : 0;
   if (policy === 'experience') score += player.age >= 26 && player.age <= 32 ? 14 : player.age <= 21 ? -8 : 0;
   if (policy === 'bargains') score += fit.askingPrice <= club.cash * 0.22 ? 18 : -10;
-  if (policy === 'promotion_push') score += fit.improvement >= 5 ? 20 : fit.improvement <= 0 ? -12 : 0;
+  if (policy === 'promotion_push') score += fit.role?.type === 'starter' ? 20 : fit.role?.type === 'rotation' ? 8 : fit.role?.type === 'poor' ? -12 : 0;
   if (policy === 'wage_control') score += fit.wageRatioAfter < 0.7 ? 16 : -18;
   if (club.director?.speciality === policy) score += 5;
 
   return clamp(Math.round(score), 1, 100);
+}
+
+function roleMeetsNeed(role, need) {
+  const ranks = { poor: 0, depth: 1, prospect: 2, rotation: 3, starter: 4 };
+  const required = { depth: 1, future: 2, rotation: 3, starter: 4 };
+  return (ranks[role] || 0) >= (required[need] || 1);
 }
 
 export function policyRecommendation(score) {

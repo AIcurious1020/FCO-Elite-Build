@@ -2631,7 +2631,10 @@ function renderTransfers() {
     const fit = transferFit(p, club);
     const policyFit = transferPolicyScore(p, club, fit);
     const rec = policyRecommendation(policyFit.score);
-    const fitClass = fit.affordable ? (fit.improvement >= 5 || fit.need.priority === 'urgent' ? 'success' : 'warning') : 'danger';
+    const roleClass = fit.role?.type === 'starter' || fit.role?.type === 'rotation' ? 'success'
+      : fit.role?.type === 'poor' ? 'danger'
+        : 'warning';
+    const fitClass = fit.affordable ? roleClass : 'danger';
     return `
     <tr>
       <td>${p.name}</td>
@@ -2642,7 +2645,7 @@ function renderTransfers() {
       <td class="num">£${fmt(p.wage)}/wk</td>
       <td class="num">£${fmt(fit.askingPrice)}</td>
       <td><span class="${fitClass} small">${fit.recommendation}</span></td>
-      <td><span class="${bandClass(rec.band)} small">${rec.label} · ${policyFit.score}</span></td>
+      <td><span class="${bandClass(rec.band)} small">${rec.label} · ${policyFit.score}</span><br><span class="muted small">${fit.role?.label || 'Squad fit'}</span></td>
       <td><button class="btn btn-sm" data-buy="${p.id}">Bid</button></td>
     </tr>`;
   }).join('');
@@ -2675,7 +2678,7 @@ function renderTransfers() {
         <button class="btn-ghost" id="refreshMarket">Scout new targets</button>
       </div>
       <table>
-        <thead><tr><th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th><th class="num">Vs Best</th><th class="num">Wage</th><th class="num">Ask</th><th>Squad Fit</th><th>DoF View</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Pos</th><th class="num">Age</th><th class="num">OVR</th><th class="num">Vs Role</th><th class="num">Wage</th><th class="num">Ask</th><th>Squad Fit</th><th>DoF View</th><th></th></tr></thead>
         <tbody>${rows || '<tr><td colspan="10" class="muted">No targets match these filters.</td></tr>'}</tbody>
       </table>
     </div>`;
@@ -3010,6 +3013,7 @@ function renderDealRoomTarget(target) {
     <span class="muted small">${player.position} · ${player.age} yrs · ${player.overall} OVR</span>
     <strong>${player.name}</strong>
     <span class="small">${brief.label}</span>
+    <span class="muted small">Role: ${fit.role?.label || 'Squad fit'} · ${fit.need?.label || 'Covered'}</span>
     <span class="${bandClass(rec.band)} small">DoF: ${rec.label} · ${policyFit.score}/100</span>
     <span class="${bandClass(manager.band)} small">Manager: ${manager.label}</span>
     <span class="muted small">${manager.text}</span>
@@ -3031,11 +3035,10 @@ function recruitmentBriefs(club) {
     .map(need => ({
       position: need.position,
       priority: need.priority === 'urgent' ? 3 : 2,
-      source: need.priority === 'urgent' ? 'Squad Need' : 'Squad Upgrade',
-      label: need.priority === 'urgent'
-        ? `${need.position} depth is below the required level`
-        : `${need.position} is below the squad average and can be upgraded`,
-      minImprovement: need.priority === 'urgent' ? -2 : 3,
+      source: need.roleNeed === 'starter' ? 'Starter Need' : need.roleNeed === 'rotation' ? 'Rotation Need' : need.roleNeed === 'future' ? 'Succession Planning' : 'Squad Need',
+      label: need.reason || need.label,
+      minRole: need.roleNeed,
+      minImprovement: need.roleNeed === 'starter' ? 2 : need.roleNeed === 'rotation' ? 0 : -2,
     }));
 
   const style = club.manager?.style || 'balanced';
@@ -3071,12 +3074,20 @@ function dealBriefScore(player, fit, policyFit, manager, brief) {
   let score = Math.round(policyFit.score * 0.55);
   score += brief.priority * 8;
   score += fit.affordable ? 10 : -18;
-  score += Math.max(-8, Math.min(18, fit.improvement * 2));
+  score += { starter: 16, rotation: 12, prospect: 9, depth: 7, poor: -18 }[fit.role?.type] || 0;
+  score += Math.max(-8, Math.min(12, fit.improvement * 1.2));
   if (brief.youth) score += player.age <= 23 ? 12 : player.age >= 29 ? -12 : 0;
   if (fit.improvement < brief.minImprovement) score -= 16;
+  if (!roleMeetsBrief(fit.role?.type, brief.minRole)) score -= 12;
   if (manager.band === 'safe') score += 10;
   if (manager.band === 'danger') score -= 14;
   return clampScore(score);
+}
+
+function roleMeetsBrief(role, need) {
+  const ranks = { poor: 0, depth: 1, prospect: 2, rotation: 3, starter: 4 };
+  const required = { depth: 1, future: 2, rotation: 3, starter: 4 };
+  return (ranks[role] || 0) >= (required[need] || 1);
 }
 
 function managerTargetView(player, club, fit = transferFit(player, club), brief = null) {
@@ -3089,11 +3100,17 @@ function managerTargetView(player, club, fit = transferFit(player, club), brief 
   if (academyBlock) {
     return { band: 'warning', label: 'Blocks academy pathway', text: 'The manager worries this signing slows a young player route.' };
   }
-  if (fit.need?.priority === 'urgent' || fit.improvement >= 6) {
-    return { band: 'safe', label: 'Manager wants him', text: 'The manager sees a clear role and expects immediate squad impact.' };
+  if (fit.role?.type === 'starter') {
+    return { band: 'safe', label: 'Starter upgrade', text: 'The manager sees him improving the first XI.' };
   }
-  if (fit.improvement >= 1 || !best) {
-    return { band: 'warning', label: 'Useful squad depth', text: 'The manager would use him, but not as a transformational signing.' };
+  if (fit.role?.type === 'rotation') {
+    return { band: 'safe', label: 'Rotation upgrade', text: 'The manager sees stronger matchday options and better cover.' };
+  }
+  if (fit.role?.type === 'prospect') {
+    return { band: 'warning', label: 'Development option', text: 'The manager likes the upside, but he is not an immediate fix.' };
+  }
+  if (fit.role?.type === 'depth' || !best) {
+    return { band: 'warning', label: 'Useful squad depth', text: 'The manager would use him as cover rather than a regular starter.' };
   }
   return { band: 'danger', label: 'Not a priority', text: 'The manager thinks funds may be better used elsewhere.' };
 }
@@ -3108,7 +3125,7 @@ function approveDealRoomTarget(id) {
   completeTransferIn(target, fit.askingPrice, club, state.market);
   removeTransferRecommendation(id);
   applyChairmanTrait({
-    ambition: fit.improvement >= 5 ? 4 : 1,
+    ambition: fit.role?.type === 'starter' ? 4 : fit.role?.type === 'rotation' ? 2 : 1,
     prudence: wageAfter > 0.8 ? -3 : 1,
     youth: target.age <= 23 ? 3 : target.age >= 30 ? -2 : 0,
     delegation: 2,
@@ -3220,7 +3237,7 @@ function submitBid(id) {
     const wageAfter = projectedWageRatio(club, target);
     completeTransferIn(target, fee, club, state.market);
     applyChairmanTrait({
-      ambition: fit.improvement >= 5 ? 4 : 1,
+      ambition: fit.role?.type === 'starter' ? 4 : fit.role?.type === 'rotation' ? 2 : 1,
       prudence: wageAfter > 0.8 ? -3 : 1,
       youth: target.age <= 23 ? 3 : target.age >= 30 ? -2 : 0,
     });
